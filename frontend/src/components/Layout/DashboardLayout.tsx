@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileText, Settings, Wallet, Menu, X } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, Wallet, Menu, X, BarChart3 } from 'lucide-react';
 import { useWallet } from '../../context/WalletContext';
 
 const DashboardLayout: React.FC = () => {
