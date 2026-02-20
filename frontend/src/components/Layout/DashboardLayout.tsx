@@ -50,10 +50,11 @@ const DashboardLayout: React.FC = () => {
                             <Link
                                 key={item.path}
                                 to={item.path}
-                                className={`flex items-center px-4 py-3 rounded-lg transition-colors ${isActive
+                                className={`flex items-center px-4 py-3 rounded-lg transition-colors ${
+                                    isActive
                                         ? 'bg-purple-600 text-white'
                                         : 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                                    }`}
+                                }`}
                                 onClick={() => setIsSidebarOpen(false)}
                             >
                                 <Icon size={20} className="mr-3" />
