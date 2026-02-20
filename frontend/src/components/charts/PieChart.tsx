@@ -15,7 +15,7 @@ const DEFAULT_COLORS = [
   '#f59e0b',
   '#ec4899',
   '#06b6d4',
-  '#818cf8',
+  '#8b5cf6',
 ];
 
 export interface PieChartSlice {
@@ -31,15 +31,15 @@ export interface PieChartProps {
   showCount?: boolean;
 }
 
-interface LabelProps {
+interface PieLabelProps {
   name?: string;
-  percent?: number;
+  percent?: number | string;
 }
 
+// Fixed: Define LegendEntry to match library expectations exactly
 interface LegendEntry {
-  payload?: {
-    percent?: string;
-  };
+  value?: string;
+  payload?: Record<string, unknown>;
 }
 
 const PieChart: React.FC<PieChartProps> = ({
@@ -70,8 +70,8 @@ const PieChart: React.FC<PieChartProps> = ({
             innerRadius={height * 0.2}
             outerRadius={height * 0.38}
             paddingAngle={2}
-            label={(props: LabelProps) =>
-              `${props.name ?? ''} ${(Number(props.percent) * 100).toFixed(0)}%`
+            label={(props: PieLabelProps) =>
+              `${props.name ?? ''} ${props.percent ?? 0}%`
             }
           >
             {withPct.map((_, i) => (
@@ -98,14 +98,16 @@ const PieChart: React.FC<PieChartProps> = ({
           />
           <Legend
             wrapperStyle={{ fontSize: 12 }}
-            formatter={(value: string, entry: unknown) => {
-               const payload = (entry as LegendEntry)?.payload;
-               return (
+            formatter={(value: string | undefined, entry: LegendEntry) => {
+              const displayValue = value ?? entry.value ?? '';
+              // Safely cast the specific payload part we need
+              const payload = entry?.payload as { percent?: string | number } | undefined;
+              return (
                 <span className="text-gray-400">
-                  {value}
+                  {displayValue}
                   {payload?.percent != null && ` (${payload.percent}%)`}
                 </span>
-               );
+              );
             }}
           />
         </RechartsPieChart>

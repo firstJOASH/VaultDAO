@@ -48,10 +48,7 @@ const LineChart: React.FC<LineChartProps> = ({
             dataKey={xKey}
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af', fontSize: 11 }}
-            tickFormatter={(v: unknown) => {
-              const str = String(v ?? '');
-              return str.length > 10 ? `${str.slice(0, 7)}...` : str;
-            }}
+            tickFormatter={(v: unknown) => (v && String(v).length > 10 ? String(v).slice(0, 7) : String(v))}
           />
           <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
           <Tooltip

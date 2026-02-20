@@ -48,10 +48,9 @@ const BarChart: React.FC<BarChartProps> = ({
             dataKey={xKey}
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af', fontSize: 11 }}
-            tickFormatter={(v: unknown) => {
-              const str = String(v ?? '');
-              return str.length > 12 ? `${str.slice(0, 8)}...` : str;
-            }}
+            tickFormatter={(v: unknown) =>
+              v && String(v).length > 12 ? `${String(v).slice(0, 8)}...` : String(v)
+            }
           />
           <YAxis stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
           <Tooltip

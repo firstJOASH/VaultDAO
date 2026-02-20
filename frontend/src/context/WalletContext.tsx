@@ -1,7 +1,8 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import {
-  isConnected,
+  isConnected as freighterIsConnected,
   isAllowed,
   setAllowed,
   getUserInfo,
@@ -22,7 +23,10 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
   const addressRef = useRef<string | null>(null);
   const networkRef = useRef<string | null>(null);
 
-  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: ToastType;
+  } | null>(null);
 
   const showToast = useCallback((message: string, type: ToastType = "info") => {
     setToast({ message, type });
@@ -32,11 +36,11 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
 
   const checkInstallation = useCallback(async () => {
     try {
-      const installed = await isConnected();
+      const installed = await freighterIsConnected();
       setIsInstalled(!!installed);
       return !!installed;
-    } catch {
-      console.error("Installation check failed");
+    } catch (e) {
+      console.error("Installation check failed", e);
       return false;
     }
   }, []);
@@ -47,12 +51,14 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
       if (currentNetwork !== networkRef.current) {
         setNetwork(currentNetwork);
         networkRef.current = currentNetwork;
+
         if (currentNetwork && currentNetwork !== "TESTNET" && connected) {
           showToast("Please switch to Stellar Testnet in Freighter", "warning");
         }
       }
       return currentNetwork;
-    } catch {
+    } catch (e) {
+      console.error("Failed to get network", e);
       return null;
     }
   }, [connected, showToast]);
@@ -70,50 +76,81 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
           }
           await validateNetwork();
           return true;
+        } else if (addressRef.current) {
+          setAddress(null);
+          addressRef.current = null;
+          setConnected(false);
+          localStorage.removeItem("wallet_connected");
         }
+      } else if (addressRef.current) {
+        setAddress(null);
+        addressRef.current = null;
+        setConnected(false);
+        localStorage.removeItem("wallet_connected");
       }
-      setAddress(null);
-      addressRef.current = null;
-      setConnected(false);
-      localStorage.removeItem("wallet_connected");
-    } catch {
-      console.error("Failed to update wallet state");
+    } catch (e) {
+      console.error("Failed to update wallet state", e);
     }
     return false;
   }, [validateNetwork]);
 
   useEffect(() => {
     const init = async () => {
-      if (await checkInstallation() && localStorage.getItem("wallet_connected") === "true") {
-        await updateWalletState();
+      const installed = await checkInstallation();
+      if (installed) {
+        const wasConnected =
+          localStorage.getItem("wallet_connected") === "true";
+        if (wasConnected) {
+          await updateWalletState();
+        }
       }
     };
     init();
+
     const interval = setInterval(async () => {
-      if (await isConnected()) await updateWalletState();
+      if (await freighterIsConnected()) {
+        await updateWalletState();
+      }
     }, 3000);
+
     return () => clearInterval(interval);
   }, [checkInstallation, updateWalletState]);
 
   const connect = async () => {
-    if (!isInstalled && !(await checkInstallation())) {
-      showToast("Freighter wallet not found.", "error");
-      window.open("https://www.freighter.app/", "_blank");
-      return;
-    }
-    try {
-      if (await setAllowed()) {
-        if (await updateWalletState()) {
-          localStorage.setItem("wallet_connected", "true");
-          showToast("Wallet connected!", "success");
-        }
+    if (!isInstalled) {
+      const installed = await checkInstallation();
+      if (!installed) {
+        showToast("Freighter wallet not found. Please install it.", "error");
+        window.open("https://www.freighter.app/", "_blank");
+        return;
       }
-    } catch {
-      showToast("Connection failed", "error");
+    }
+
+    try {
+      const allowed = await setAllowed();
+      if (allowed) {
+        const success = await updateWalletState();
+        if (success) {
+          localStorage.setItem("wallet_connected", "true");
+          showToast("Wallet connected successfully!", "success");
+
+          const net = await getNetwork();
+          if (net !== "TESTNET") {
+            showToast("Application works best on Testnet", "warning");
+          }
+        }
+      } else {
+        showToast("Connection request rejected", "error");
+      }
+    } catch (e: unknown) {
+      console.error("Failed to connect wallet", e);
+      const errorMessage =
+        e instanceof Error ? e.message : "Failed to connect wallet";
+      showToast(errorMessage, "error");
     }
   };
 
-  const disconnect = useCallback(async () => {
+  const disconnect = async () => {
     setConnected(false);
     setAddress(null);
     setNetwork(null);
@@ -121,28 +158,25 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({
     networkRef.current = null;
     localStorage.removeItem("wallet_connected");
     showToast("Wallet disconnected", "info");
-    return Promise.resolve();
-  }, [showToast]);
+  };
 
   return (
-    <WalletContext.Provider 
-      value={{ 
-        isConnected: connected, 
-        isInstalled, 
-        address, 
-        network, 
-        connect, 
-        disconnect 
+    <WalletContext.Provider
+      value={{
+        isConnected: connected,
+        isInstalled,
+        address,
+        network,
+        connect,
+        disconnect,
       }}
     >
       {children}
       {toast && (
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={clearToast} 
-        />
+        <Toast message={toast.message} type={toast.type} onClose={clearToast} />
       )}
     </WalletContext.Provider>
   );
 };
+
+export { useWallet } from '../hooks/useWallet';
