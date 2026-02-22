@@ -176,18 +176,24 @@ Then create a PR on GitHub with:
 - Reference to related issues (e.g., "Closes #42")
 - Screenshots for UI changes
 
-## 🧪 Testing Requirements
+## 🧪 Testing
+
+For the full testing guide — including how to run tests, write new ones, set up coverage, and understand CI requirements — see **[docs/TESTING.md](docs/TESTING.md)**.
+
+### Testing Requirements
 
 ### For Smart Contract Changes
 
-- All existing tests must pass
-- Add new tests for new functionality
+- All existing tests must pass (`cargo test`)
+- Add new tests for new functionality in `contracts/vault/src/test.rs`
 - Aim for comprehensive coverage of edge cases
 - Test both success and failure scenarios
+- Use `try_*` variants to assert on error types
 
 ### For Frontend Changes
 
-- Ensure the app builds without errors
+- Ensure the app builds without errors (`npm run build`)
+- Write or update Vitest tests for new components/hooks (see [TESTING.md](docs/TESTING.md#4-writing-component-tests))
 - Test manually in the browser
 - Verify wallet integration works (if applicable)
 - Check responsive design on mobile

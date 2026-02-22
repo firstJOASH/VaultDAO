@@ -12,10 +12,14 @@
   "dependencies": {
     "@soroban-react/core": "^9.3.0",
     "@stellar/freighter-api": "1.7.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.473.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.1.5",
+    "recharts": "^3.7.0",
     "stellar-sdk": "11.3.0"
   },
   "devDependencies": {

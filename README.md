@@ -42,6 +42,8 @@ To optimize for ledger rent and data capabilities, we use a hybrid storage model
 - **100% Logic Coverage**: The multi-signature voting engine, timelock delays, and limit trackers are fully covered by unit tests in `src/test.rs`.
 - **RBAC Verification**: Every sensitive function invokes `require_auth()` and checks the caller's role against the stored registry.
 
+See [docs/TESTING.md](docs/TESTING.md) for the full testing guide.
+
 ---
 
 ## 🏗️ Architecture & Structure
@@ -104,6 +106,33 @@ For detailed setup and deployment instructions, see [docs/DEPLOYMENT.md](docs/DE
 cd contracts/vault
 cargo test
 ```
+
+---
+
+## 📦 SDK & Developer Integration
+
+Integrate VaultDAO into your own application using the official TypeScript SDK.
+
+```bash
+npm install @vaultdao/sdk
+```
+
+- **API Reference**: [docs/API.md](docs/API.md)
+- **SDK README**: [sdk/README.md](sdk/README.md)
+- **Usage examples**: [`sdk/examples/`](sdk/examples/)
+## 🧪 Testing
+
+VaultDAO has a comprehensive test suite covering smart contract logic and (soon) frontend components.
+
+```bash
+# Smart contract tests
+cd contracts/vault && cargo test
+
+# Frontend tests (after setup)
+cd frontend && npm test
+```
+
+Read the full guide: [docs/TESTING.md](docs/TESTING.md)
 
 ---
 

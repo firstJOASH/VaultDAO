@@ -1,41 +1,43 @@
 import React from 'react';
-import { ProposalStatus } from '../hooks/useVaultContract';
+
+export type ProposalStatus = 'Pending' | 'Approved' | 'Rejected' | 'Executed' | 'Expired';
 
 interface StatusBadgeProps {
-  status: ProposalStatus;
+  status: ProposalStatus | number;
+  className?: string;
 }
 
-const STATUS_CONFIG: Record<ProposalStatus, { label: string; className: string }> = {
-  [ProposalStatus.Pending]: {
-    label: 'Pending',
-    className: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-  },
-  [ProposalStatus.Approved]: {
-    label: 'Approved',
-    className: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-  },
-  [ProposalStatus.Executed]: {
-    label: 'Executed',
-    className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-  },
-  [ProposalStatus.Rejected]: {
-    label: 'Rejected',
-    className: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
-  },
-  [ProposalStatus.Expired]: {
-    label: 'Expired',
-    className: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
-  },
+// Map numeric status to string status
+const statusToString = (status: ProposalStatus | number): ProposalStatus => {
+  if (typeof status === 'string') return status;
+  
+  const statusMap: Record<number, ProposalStatus> = {
+    0: 'Pending',
+    1: 'Approved',
+    2: 'Executed',
+    3: 'Rejected',
+    4: 'Expired',
+  };
+  
+  return statusMap[status] || 'Pending';
 };
 
-const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
-  const config = STATUS_CONFIG[status] ?? STATUS_CONFIG[ProposalStatus.Pending];
+const colorMap: Record<ProposalStatus, string> = {
+  Pending: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  Approved: 'bg-green-500/10 text-green-400 border-green-500/20',
+  Rejected: 'bg-red-500/10 text-red-400 border-red-500/20',
+  Executed: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  Expired: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
+};
 
+const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => {
+  const statusString = statusToString(status);
+  
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${config.className}`}
+      className={`px-3 py-1 rounded-full text-xs font-medium border ${colorMap[statusString]} ${className} transition-colors duration-200`}
     >
-      {config.label}
+      {statusString}
     </span>
   );
 };

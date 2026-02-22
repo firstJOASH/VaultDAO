@@ -1,23 +1,46 @@
 {
-    "name": "vaultdao-sdk",
-    "version": "0.1.0",
-    "description": "TypeScript SDK for VaultDAO Soroban Contract",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "scripts": {
-        "build": "tsc",
-        "bindings": "stellar contract bindings typescript --wasm ../contracts/vault/target/wasm32-unknown-unknown/release/vault_dao.wasm --id <CONTRACT_ID> --network testnet --output-dir src/bindings"
-    },
-    "keywords": [
-        "stellar",
-        "soroban",
-        "sdk",
-        "vaultdao"
-    ],
-    "author": "Otowo Samuel",
-    "license": "MIT",
-    "devDependencies": {
-        "typescript": "^5.0.0",
-        "stellar-sdk": "^11.0.0"
+  "name": "@vaultdao/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the VaultDAO Soroban treasury contract on Stellar",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "bindings": "stellar contract bindings typescript --wasm ../contracts/vault/target/wasm32-unknown-unknown/release/vault_dao.wasm --id <CONTRACT_ID> --network testnet --output-dir src/bindings",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "sdk",
+    "vaultdao",
+    "multisig",
+    "treasury"
+  ],
+  "author": "Otowo Samuel",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NovaGrids/VaultDAO.git",
+    "directory": "sdk"
+  },
+  "peerDependencies": {
+    "@stellar/freighter-api": ">=1.7.0"
+  },
+  "peerDependenciesMeta": {
+    "@stellar/freighter-api": {
+      "optional": true
     }
+  },
+  "dependencies": {
+    "stellar-sdk": "^11.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@stellar/freighter-api": "1.7.1"
+  }
 }

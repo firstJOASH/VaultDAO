@@ -1,176 +1,333 @@
-// frontend/src/hooks/useVaultContract.ts
+import { useState, useCallback } from 'react';
+import {
+    xdr,
+    Address,
+    Operation,
+    TransactionBuilder,
+    SorobanRpc,
+    nativeToScVal,
+    scValToNative
+} from 'stellar-sdk';
+import { signTransaction } from '@stellar/freighter-api';
+import { useWallet } from '../context/WalletContextProps';
+import { parseError } from '../utils/errorParser';
+import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
 
-import { useCallback } from 'react';
-import { useSorobanReact } from '@soroban-react/core';
+const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+const RPC_URL = "https://soroban-testnet.stellar.org";
+const EVENTS_PAGE_SIZE = 20;
 
-// Define the Proposal type
-export interface Proposal {
-  id: number;
-  proposer: string;
-  recipient: string;
-  amount: bigint;
-  status: ProposalStatus;
-  description: string;
-  createdAt: number;
-  unlockTime?: number;
+const server = new SorobanRpc.Server(RPC_URL);
+
+interface StellarBalance {
+    asset_type: string;
+    balance: string;
 }
 
-export const ProposalStatus = {
-  Pending: 0,
-  Approved: 1,
-  Executed: 2,
-  Rejected: 3,
-  Expired: 4,
-} as const;
+/** Known contract event names (topic[0] symbol) */
+const EVENT_SYMBOLS: VaultEventType[] = [
+    'proposal_created', 'proposal_approved', 'proposal_ready', 'proposal_executed',
+    'proposal_rejected', 'signer_added', 'signer_removed', 'config_updated', 'initialized', 'role_assigned'
+];
 
-export type ProposalStatus = (typeof ProposalStatus)[keyof typeof ProposalStatus];
+function getEventTypeFromTopic(topic0Base64: string): VaultEventType {
+    try {
+        const scv = xdr.ScVal.fromXDR(topic0Base64, 'base64');
+        const native = scValToNative(scv);
+        if (typeof native === 'string' && EVENT_SYMBOLS.includes(native as VaultEventType)) {
+            return native as VaultEventType;
+        }
+        return 'unknown';
+    } catch {
+        return 'unknown';
+    }
+}
 
-type SorobanServer = NonNullable<ReturnType<typeof useSorobanReact>['server']>;
-type ContractDataKey = Parameters<SorobanServer['getContractData']>[1];
+function addressToNative(addrScVal: unknown): string {
+    if (typeof addrScVal === 'string') return addrScVal;
+    if (addrScVal != null && typeof addrScVal === 'object') {
+        const o = addrScVal as Record<string, unknown>;
+        if (typeof o.address === 'function') return (o.address as () => string)();
+        if (typeof o.address === 'string') return o.address;
+    }
+    return String(addrScVal ?? '');
+}
 
-const toObjectRecord = (value: unknown): Record<string, unknown> => {
-  if (typeof value === 'object' && value !== null) {
-    return value as Record<string, unknown>;
-  }
-  return {};
-};
+function parseEventValue(valueXdrBase64: string, eventType: VaultEventType): { actor: string; details: Record<string, unknown> } {
+    const details: Record<string, unknown> = {};
+    let actor = '';
+    try {
+        const scv = xdr.ScVal.fromXDR(valueXdrBase64, 'base64');
+        const native = scValToNative(scv);
+        if (Array.isArray(native)) {
+            const vec = native as unknown[];
+            const first = vec[0];
+            actor = addressToNative(first);
+            if (eventType === 'proposal_created' && vec.length >= 3) {
+                details.proposer = actor;
+                details.recipient = addressToNative(vec[1]);
+                details.amount = vec[2] != null ? String(vec[2]) : '';
+            } else if (eventType === 'proposal_approved' && vec.length >= 3) {
+                details.approval_count = vec[1];
+                details.threshold = vec[2];
+            } else if (eventType === 'proposal_executed' && vec.length >= 3) {
+                details.recipient = addressToNative(vec[1]);
+                details.amount = vec[2] != null ? String(vec[2]) : '';
+            } else if ((eventType === 'signer_added' || eventType === 'signer_removed') && vec.length >= 2) {
+                details.total_signers = vec[1];
+            } else if (eventType === 'role_assigned' && vec.length >= 2) {
+                details.role = vec[1];
+            } else {
+                details.raw = native;
+            }
+        } else {
+            actor = addressToNative(native);
+            if (native !== null && typeof native === 'object') {
+                details.raw = native;
+            }
+        }
+    } catch {
+        details.parseError = true;
+    }
+    return { actor, details };
+}
 
-const unwrapVal = (value: unknown): unknown => {
-  const record = toObjectRecord(value);
-  return record.val ?? value;
-};
-
-const normalizeStatus = (value: unknown): ProposalStatus => {
-  const parsed = Number(value);
-  switch (parsed) {
-    case ProposalStatus.Pending:
-    case ProposalStatus.Approved:
-    case ProposalStatus.Executed:
-    case ProposalStatus.Rejected:
-    case ProposalStatus.Expired:
-      return parsed;
-    default:
-      return ProposalStatus.Pending;
-  }
-};
-
-const toBigInt = (value: unknown): bigint => {
-  try {
-    return BigInt(String(value ?? 0));
-  } catch {
-    return 0n;
-  }
-};
-
-const parseProposal = (id: number, rawValue: unknown): Proposal => {
-  const value = toObjectRecord(unwrapVal(rawValue));
-
-  const proposer = String(value.proposer ?? value.from ?? '');
-  const recipient = String(value.recipient ?? value.to ?? '');
-  const amount = toBigInt(value.amount ?? value.value);
-  const status = normalizeStatus(value.status ?? value.state);
-  const createdAt = Number(value.created_at ?? value.createdAt ?? 0);
-  const unlockTime = value.unlock_ledger ?? value.unlockTime;
-  const description = String(value.memo ?? value.description ?? '');
-
-  return {
-    id,
-    proposer,
-    recipient,
-    amount,
-    status,
-    description,
-    createdAt,
-    unlockTime: unlockTime ? Number(unlockTime) : undefined,
-  };
-};
+interface RawEvent {
+    type: string;
+    ledger: string;
+    ledgerClosedAt?: string;
+    contractId?: string;
+    id: string;
+    pagingToken?: string;
+    inSuccessfulContractCall?: boolean;
+    topic?: string[];
+    value?: { xdr: string };
+}
 
 export const useVaultContract = () => {
-  const { server } = useSorobanReact();
+    const { address, isConnected } = useWallet();
+    const [loading, setLoading] = useState(false);
 
-  const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined;
-
-  const getCounter = useCallback(async (): Promise<number> => {
-    if (!server || !contractAddress) {
-      return 0;
-    }
-
-    const counterKeys = ['NextProposalId', 'next_proposal_id', 'proposal_count'];
-    for (const key of counterKeys) {
-      try {
-        const typedKey = key as unknown as ContractDataKey;
-        const result = await server.getContractData(contractAddress, typedKey);
-        const val = unwrapVal(result);
-        const parsed = Number(String(val));
-        if (Number.isFinite(parsed) && parsed >= 0) {
-          return parsed;
-        }
-      } catch {
-        // Try next key.
-      }
-    }
-    return 0;
-  }, [contractAddress, server]);
-
-  const getProposalById = useCallback(
-    async (id: number): Promise<Proposal | null> => {
-      if (!server || !contractAddress) {
-        return null;
-      }
-
-      const keysToTry: ContractDataKey[] = [
-        `proposal_${id}` as unknown as ContractDataKey,
-        `Proposal(${id})` as unknown as ContractDataKey,
-        { Proposal: id } as unknown as ContractDataKey,
-        id as unknown as ContractDataKey,
-      ];
-
-      for (const key of keysToTry) {
+    const getDashboardStats = useCallback(async () => {
         try {
-          const result = await server.getContractData(contractAddress, key);
-          return parseProposal(id, result);
-        } catch {
-          // Try next key format.
+            const accountInfo = await server.getAccount(CONTRACT_ID) as unknown as { balances: StellarBalance[] };
+            const nativeBalance = accountInfo.balances.find((b: StellarBalance) => b.asset_type === 'native');
+            const balance = nativeBalance ? parseFloat(nativeBalance.balance).toLocaleString() : "0";
+
+            return {
+                totalBalance: balance,
+                totalProposals: 24,
+                pendingApprovals: 3,
+                readyToExecute: 1,
+                activeSigners: 5,
+                threshold: "3/5"
+            };
+        } catch (e) {
+            console.error("Failed to fetch dashboard stats:", e);
+            return {
+                totalBalance: "0",
+                totalProposals: 0,
+                pendingApprovals: 0,
+                readyToExecute: 0,
+                activeSigners: 0,
+                threshold: "0/0"
+            };
         }
-      }
+    }, []);
 
-      return null;
-    },
-    [contractAddress, server]
-  );
-
-  const getProposals = useCallback(async (): Promise<Proposal[]> => {
-    try {
-      if (!contractAddress) {
-        throw new Error('Contract address not configured');
-      }
-
-      if (!server) {
-        throw new Error('Soroban server not available');
-      }
-
-      const proposalCount = await getCounter();
-      const proposals: Proposal[] = [];
-
-      for (let i = 0; i < proposalCount; i++) {
+    const proposeTransfer = async (recipient: string, token: string, amount: string, memo: string) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
         try {
-          const proposal = await getProposalById(i);
-          if (proposal) {
-            proposals.push(proposal);
-          }
-        } catch (error) {
-          console.error(`Error fetching proposal ${i}:`, error);
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "propose_transfer",
+                            args: [
+                                new Address(address).toScVal(),
+                                new Address(recipient).toScVal(),
+                                new Address(token).toScVal(),
+                                nativeToScVal(BigInt(amount)),
+                                xdr.ScVal.scvSymbol(memo),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
         }
-      }
+    };
 
-      return proposals;
-    } catch (error) {
-      console.error('Error fetching proposals:', error);
-      throw new Error('Failed to fetch proposals from contract');
-    }
-  }, [contractAddress, getCounter, getProposalById, server]);
+    const rejectProposal = async (proposalId: number) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "reject_proposal",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
 
-  return {
-    getProposals,
-  };
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const executeProposal = async (proposalId: number) => {
+        if (!isConnected || !address) {
+            throw new Error("Wallet not connected");
+        }
+
+        setLoading(true);
+        try {
+            // 1. Get latest account data
+            const account = await server.getAccount(address);
+
+            // 2. Build Transaction
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "execute_proposal",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            // 3. Simulate Transaction
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) {
+                throw new Error(`Simulation Failed: ${simulation.error}`);
+            }
+
+            // Assemble transaction with simulation data
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+
+            // 4. Sign with Freighter
+            const signedXdr = await signTransaction(preparedTx.toXDR(), {
+                network: "TESTNET",
+            });
+
+            // 5. Submit Transaction
+            const response = await server.sendTransaction(
+                TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE)
+            );
+
+            if (response.status !== "PENDING") {
+                throw new Error("Transaction submission failed");
+            }
+
+            return response.hash;
+
+        } catch (e: unknown) {
+            const parsed = parseError(e);
+            throw parsed;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const getVaultEvents = async (
+        cursor?: string,
+        limit: number = EVENTS_PAGE_SIZE
+    ): Promise<GetVaultEventsResult> => {
+        try {
+            const latestLedgerRes = await fetch(RPC_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestLedger' }),
+            });
+            const latestLedgerData = await latestLedgerRes.json();
+            const latestLedger = latestLedgerData?.result?.sequence ?? '0';
+            const startLedger = cursor ? undefined : Math.max(1, parseInt(latestLedger, 10) - 50000);
+
+            const params: Record<string, unknown> = {
+                filters: [{ type: 'contract', contractIds: [CONTRACT_ID] }],
+                pagination: { limit: Math.min(limit, 200) },
+            };
+            if (!cursor) params.startLedger = String(startLedger);
+            else params.pagination = { ...(params.pagination as object), cursor };
+
+            const res = await fetch(RPC_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getEvents', params }),
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(data.error.message || 'getEvents failed');
+            const events: RawEvent[] = data.result?.events ?? [];
+            const resultCursor = data.result?.cursor;
+            const hasMore = Boolean(resultCursor && events.length === limit);
+
+            const activities: VaultActivity[] = events.map(ev => {
+                const topic0 = ev.topic?.[0];
+                const valueXdr = ev.value?.xdr;
+                const eventType = topic0 ? getEventTypeFromTopic(topic0) : 'unknown';
+                const { actor, details } = valueXdr ? parseEventValue(valueXdr, eventType) : { actor: '', details: {} };
+                return {
+                    id: ev.id,
+                    type: eventType,
+                    timestamp: ev.ledgerClosedAt || new Date().toISOString(),
+                    ledger: ev.ledger,
+                    actor,
+                    details: { ...details, ledger: ev.ledger },
+                    eventId: ev.id,
+                    pagingToken: ev.pagingToken,
+                };
+            });
+
+            return { activities, latestLedger: data.result?.latestLedger ?? latestLedger, cursor: resultCursor, hasMore };
+        } catch (e) {
+            console.error('getVaultEvents', e);
+            return { activities: [], latestLedger: '0', hasMore: false };
+        }
+    };
+
+    return { proposeTransfer, rejectProposal, executeProposal, getDashboardStats, getVaultEvents, loading };
 };
