@@ -372,3 +372,69 @@ pub struct SwapResult {
     pub price_impact_bps: u32,
     pub executed_at: u64,
 }
+
+// ============================================================================
+// Cross-Chain Bridge (Issue: feature/cross-chain-bridge)
+// ============================================================================
+
+/// Chain identifier for cross-chain operations
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChainId {
+    Stellar,
+    Ethereum,
+    Polygon,
+    Arbitrum,
+    Optimism,
+}
+
+/// Cross-chain asset representation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainAsset {
+    pub chain: ChainId,
+    pub token_address: String,
+    pub decimals: u32,
+    pub confirmations: u32,
+    pub required_confirmations: u32,
+    pub status: u32,
+}
+
+/// Cross-chain transfer proposal
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainProposal {
+    pub target_chain: ChainId,
+    pub recipient: String,
+    pub amount: i128,
+    pub asset: CrossChainAsset,
+    pub bridge_fee: i128,
+}
+
+/// Bridge configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BridgeConfig {
+    pub enabled_chains: Vec<ChainId>,
+    pub max_bridge_amount: i128,
+    pub fee_bps: u32,
+    pub min_confirmations: Vec<ChainConfirmation>,
+}
+
+/// Minimum confirmations per chain
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ChainConfirmation {
+    pub chain_id: ChainId,
+    pub confirmations: u32,
+}
+
+/// Cross-chain transfer parameters
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossChainTransferParams {
+    pub chain: ChainId,
+    pub recipient: String,
+    pub amount: i128,
+    pub token: Address,
+}

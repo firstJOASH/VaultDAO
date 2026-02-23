@@ -115,4 +115,12 @@ pub enum VaultError {
     InvalidSwapParams = 1304,
     /// DEX operation failed
     DexOperationFailed = 1305,
+
+    // Bridge errors (14xx)
+    /// Bridge is not configured
+    BridgeNotConfigured = 1400,
+    /// Target chain is not supported
+    ChainNotSupported = 1401,
+    /// Amount exceeds bridge limit
+    ExceedsBridgeLimit = 1402,
 }

@@ -623,5 +623,6 @@ export const useVaultContract = () => {
         getAllRoles: async () => [],
         setRole: async (_address: string, _role: number) => { },
         getUserRole: async (_address: string) => 0,
+        assignRole: async (_address: string, _role: number) => { },
     };
 };
