@@ -79,6 +79,7 @@ pub enum VaultError {
     BalanceConditionFailed = 701,
     /// Date condition not satisfied
     DateConditionFailed = 702,
+    ProposalAlreadyCancelled = 703,
 
     // Recipient list errors (8xx)
     AddressAlreadyOnList = 800,
@@ -123,4 +124,12 @@ pub enum VaultError {
     ChainNotSupported = 1401,
     /// Amount exceeds bridge limit
     ExceedsBridgeLimit = 1402,
+
+    // Gas limit errors (15xx)
+    /// Proposal execution would exceed the configured gas (CPU instruction) limit
+    GasLimitExceeded = 1500,
+
+    // Snapshot voting errors (16xx)
+    /// Caller was not a signer at proposal creation time (snapshot)
+    VoterNotInSnapshot = 1600,
 }

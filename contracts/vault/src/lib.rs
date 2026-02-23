@@ -19,8 +19,9 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode, NotificationPreferences,
-    Priority, Proposal, ProposalStatus, Reputation, Role, ThresholdStrategy,
+    Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
+    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, Role,
+    ThresholdStrategy, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -222,6 +223,14 @@ impl VaultDAO {
         let proposal_id = storage::increment_proposal_id(&env);
         let current_ledger = env.ledger().sequence() as u64;
 
+        // Gas limit: derive from GasConfig (0 = unlimited)
+        let gas_cfg = storage::get_gas_config(&env);
+        let proposal_gas_limit = if gas_cfg.enabled {
+            gas_cfg.default_gas_limit
+        } else {
+            0
+        };
+
         let proposal = Proposal {
             id: proposal_id,
             proposer: proposer.clone(),
@@ -240,6 +249,10 @@ impl VaultDAO {
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
             insurance_amount: actual_insurance,
+            gas_limit: proposal_gas_limit,
+            gas_used: 0,
+            snapshot_ledger: current_ledger,
+            snapshot_signers: config.signers.clone(),
             is_swap: false,
         };
 
@@ -271,6 +284,9 @@ impl VaultDAO {
 
         // Update reputation for creating proposal
         Self::update_reputation_on_propose(&env, &proposer);
+
+        // Update performance metrics
+        storage::metrics_on_proposal(&env);
 
         Ok(proposal_id)
     }
@@ -489,6 +505,11 @@ impl VaultDAO {
         // Get proposal
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
+        // Snapshot check: voter must have been a signer at proposal creation
+        if !proposal.snapshot_signers.contains(&signer) {
+            return Err(VaultError::VoterNotInSnapshot);
+        }
+
         // Validate state
         if proposal.status != ProposalStatus::Pending {
             return Err(VaultError::ProposalNotPending);
@@ -579,6 +600,7 @@ impl VaultDAO {
         if current_ledger > proposal.expires_at {
             proposal.status = ProposalStatus::Expired;
             storage::set_proposal(&env, &proposal);
+            storage::metrics_on_expiry(&env);
             return Err(VaultError::ProposalExpired);
         }
 
@@ -590,6 +612,15 @@ impl VaultDAO {
         // Evaluate execution conditions (if any) before balance check
         if !proposal.conditions.is_empty() {
             Self::evaluate_conditions(&env, &proposal)?;
+        }
+
+        // Gas limit check: estimate execution cost and enforce limit
+        let gas_cfg = storage::get_gas_config(&env);
+        let estimated_gas =
+            gas_cfg.base_cost + proposal.conditions.len() as u64 * gas_cfg.condition_cost;
+        if proposal.gas_limit > 0 && estimated_gas > proposal.gas_limit {
+            events::emit_gas_limit_exceeded(&env, proposal_id, estimated_gas, proposal.gas_limit);
+            return Err(VaultError::GasLimitExceeded);
         }
 
         // Check vault balance (account for insurance amount that is also held in vault)
@@ -617,6 +648,9 @@ impl VaultDAO {
             );
         }
 
+        // Record gas used on the proposal
+        proposal.gas_used = estimated_gas;
+
         // Update proposal status
         proposal.status = ProposalStatus::Executed;
         storage::set_proposal(&env, &proposal);
@@ -635,6 +669,18 @@ impl VaultDAO {
 
         // Update reputation: proposer +10, each approver +5
         Self::update_reputation_on_execution(&env, &proposal);
+
+        // Update performance metrics
+        let execution_time = current_ledger.saturating_sub(proposal.created_at);
+        storage::metrics_on_execution(&env, estimated_gas, execution_time);
+        let metrics = storage::get_metrics(&env);
+        events::emit_metrics_updated(
+            &env,
+            metrics.executed_count,
+            metrics.rejected_count,
+            metrics.expired_count,
+            metrics.success_rate_bps(),
+        );
 
         Ok(())
     }
@@ -693,7 +739,93 @@ impl VaultDAO {
         // Penalize proposer reputation on rejection
         Self::update_reputation_on_rejection(&env, &proposal.proposer);
 
+        // Update performance metrics
+        storage::metrics_on_rejection(&env);
+
         Ok(())
+    }
+
+    /// Cancel a pending proposal and refund reserved spending limits.
+    ///
+    /// Only the original proposer or an Admin can cancel. Unlike rejection,
+    /// cancellation **refunds** the reserved daily/weekly spending amounts so
+    /// the capacity is available for future proposals.
+    ///
+    /// # Arguments
+    /// * `canceller` - Address initiating the cancellation (must authorize).
+    /// * `proposal_id` - ID of the proposal to cancel.
+    /// * `reason` - Short symbol describing why the proposal is being cancelled.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or a `VaultError` on failure.
+    pub fn cancel_proposal(
+        env: Env,
+        canceller: Address,
+        proposal_id: u64,
+        reason: Symbol,
+    ) -> Result<(), VaultError> {
+        canceller.require_auth();
+
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Guard: already cancelled
+        if proposal.status == ProposalStatus::Cancelled {
+            return Err(VaultError::ProposalAlreadyCancelled);
+        }
+
+        // Guard: only Pending proposals can be cancelled (Approved ones must use reject)
+        if proposal.status != ProposalStatus::Pending {
+            return Err(VaultError::ProposalNotPending);
+        }
+
+        // Authorization: only proposer or Admin
+        let role = storage::get_role(&env, &canceller);
+        if role != Role::Admin && canceller != proposal.proposer {
+            return Err(VaultError::Unauthorized);
+        }
+
+        // --- Refund spending limits ---
+        storage::refund_spending_limits(&env, proposal.amount);
+
+        // --- Update proposal status ---
+        proposal.status = ProposalStatus::Cancelled;
+        storage::set_proposal(&env, &proposal);
+
+        // --- Remove from priority queue ---
+        storage::remove_from_priority_queue(&env, proposal.priority.clone() as u32, proposal_id);
+
+        // --- Store cancellation record (audit trail) ---
+        let current_ledger = env.ledger().sequence() as u64;
+        let record = crate::types::CancellationRecord {
+            proposal_id,
+            cancelled_by: canceller.clone(),
+            reason: reason.clone(),
+            cancelled_at_ledger: current_ledger,
+            refunded_amount: proposal.amount,
+        };
+        storage::set_cancellation_record(&env, &record);
+        storage::add_to_cancellation_history(&env, proposal_id);
+        storage::extend_instance_ttl(&env);
+
+        // --- Emit event ---
+        events::emit_proposal_cancelled(&env, proposal_id, &canceller, &reason, proposal.amount);
+
+        Ok(())
+    }
+
+    /// Retrieve the cancellation record for a cancelled proposal.
+    ///
+    /// Useful for auditing: returns who cancelled, why, when, and how much was refunded.
+    pub fn get_cancellation_record(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<crate::types::CancellationRecord, VaultError> {
+        storage::get_cancellation_record(&env, proposal_id)
+    }
+
+    /// Retrieve the full cancellation history (list of cancelled proposal IDs).
+    pub fn get_cancellation_history(env: Env) -> soroban_sdk::Vec<u64> {
+        storage::get_cancellation_history(&env)
     }
 
     // ========================================================================
@@ -1255,6 +1387,11 @@ impl VaultDAO {
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
 
+        // Snapshot check: voter must have been a signer at proposal creation
+        if !proposal.snapshot_signers.contains(&signer) {
+            return Err(VaultError::VoterNotInSnapshot);
+        }
+
         if proposal.status != ProposalStatus::Pending {
             return Err(VaultError::ProposalNotPending);
         }
@@ -1302,6 +1439,7 @@ impl VaultDAO {
 
         // Load config once (gas optimization — avoids repeated storage reads)
         let _config = storage::get_config(&env)?;
+        let gas_cfg = storage::get_gas_config(&env);
 
         let current_ledger = env.ledger().sequence() as u64;
         let mut executed = Vec::new(&env);
@@ -1346,6 +1484,14 @@ impl VaultDAO {
                 continue;
             }
 
+            // Skip if gas limit would be exceeded
+            let estimated_gas =
+                gas_cfg.base_cost + proposal.conditions.len() as u64 * gas_cfg.condition_cost;
+            if proposal.gas_limit > 0 && estimated_gas > proposal.gas_limit {
+                failed_count += 1;
+                continue;
+            }
+
             // Skip if insufficient balance (check both proposal amount and insurance)
             let balance = token::balance(&env, &proposal.token);
             if balance < proposal.amount {
@@ -1372,6 +1518,7 @@ impl VaultDAO {
                 );
             }
 
+            proposal.gas_used = estimated_gas;
             proposal.status = ProposalStatus::Executed;
             storage::set_proposal(&env, &proposal);
 
@@ -1386,6 +1533,8 @@ impl VaultDAO {
             );
 
             Self::update_reputation_on_execution(&env, &proposal);
+            let exec_time = current_ledger.saturating_sub(proposal.created_at);
+            storage::metrics_on_execution(&env, estimated_gas, exec_time);
             executed.push_back(proposal_id);
         }
 
@@ -1568,6 +1717,43 @@ impl VaultDAO {
     /// Get notification preferences for an address.
     pub fn get_notification_preferences(env: Env, addr: Address) -> NotificationPreferences {
         storage::get_notification_prefs(&env, &addr)
+    }
+
+    // ========================================================================
+    // Gas Limit Configuration (Issue: feature/gas-limits)
+    // ========================================================================
+
+    /// Set the vault's gas execution limit configuration.
+    ///
+    /// Only Admin can change gas settings.
+    pub fn set_gas_config(env: Env, admin: Address, config: GasConfig) -> Result<(), VaultError> {
+        admin.require_auth();
+
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        storage::set_gas_config(&env, &config);
+        storage::extend_instance_ttl(&env);
+
+        events::emit_gas_config_updated(&env, &admin);
+
+        Ok(())
+    }
+
+    /// Get the current gas configuration.
+    pub fn get_gas_config(env: Env) -> GasConfig {
+        storage::get_gas_config(&env)
+    }
+
+    // ========================================================================
+    // Performance Metrics (Issue: feature/performance-metrics)
+    // ========================================================================
+
+    /// Get vault-wide performance metrics.
+    pub fn get_metrics(env: Env) -> VaultMetrics {
+        storage::get_metrics(&env)
     }
 
     // ========================================================================
@@ -1807,6 +1993,13 @@ impl VaultDAO {
         let current_ledger = env.ledger().sequence();
         let unlock_ledger = current_ledger + config.timelock_delay as u32;
 
+        let gas_cfg = storage::get_gas_config(&env);
+        let proposal_gas_limit = if gas_cfg.enabled {
+            gas_cfg.default_gas_limit
+        } else {
+            0
+        };
+
         let proposal = Proposal {
             id: proposal_id,
             proposer: proposer.clone(),
@@ -1825,6 +2018,10 @@ impl VaultDAO {
             expires_at: (current_ledger + PROPOSAL_EXPIRY_LEDGERS as u32) as u64,
             unlock_ledger: unlock_ledger as u64,
             insurance_amount,
+            gas_limit: proposal_gas_limit,
+            gas_used: 0,
+            snapshot_ledger: current_ledger as u64,
+            snapshot_signers: config.signers.clone(),
             is_swap: true,
         };
 
@@ -1841,6 +2038,7 @@ impl VaultDAO {
             0,
         );
         Self::update_reputation_on_propose(&env, &proposer);
+        storage::metrics_on_proposal(&env);
         Ok(proposal_id)
     }
 
