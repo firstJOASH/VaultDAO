@@ -22,6 +22,7 @@ pub struct InitConfig {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
 }
@@ -44,6 +45,7 @@ pub struct Config {
     pub timelock_threshold: i128,
     /// Delay in ledgers for timelocked proposals
     pub timelock_delay: u64,
+    pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
 }
@@ -97,17 +99,6 @@ pub enum Role {
     Admin = 2,
 }
 
-/// Priority levels for proposals.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Priority {
-    Low = 0,
-    Normal = 1,
-    High = 2,
-    Critical = 3,
-}
-
 /// The lifecycle states of a proposal.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,33 +114,6 @@ pub enum ProposalStatus {
     Rejected = 3,
     /// Reached expiration ledger without hitting the approval threshold.
     Expired = 4,
-}
-
-/// Execution condition types
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Condition {
-    /// Execute only if vault balance is above threshold
-    BalanceAbove(i128),
-    /// Execute only if vault balance is below threshold
-    BalanceBelow(i128),
-    /// Execute only after specific ledger
-    DateAfter(u64),
-    /// Execute only before specific ledger
-    DateBefore(u64),
-    /// Custom condition (reserved for future use)
-    Custom(Symbol),
-}
-
-/// Logic operator for combining multiple conditions
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum ConditionLogic {
-    /// All conditions must be met
-    And = 0,
-    /// At least one condition must be met
-    Or = 1,
 }
 
 /// Transfer proposal
@@ -170,24 +134,14 @@ pub struct Proposal {
     pub memo: Symbol,
     /// Addresses that have approved
     pub approvals: Vec<Address>,
-    /// Addresses that have abstained
-    pub abstentions: Vec<Address>,
     /// Current status
     pub status: ProposalStatus,
-    /// Priority level
-    pub priority: Priority,
-    /// IPFS hashes for attachments (invoices, receipts, documents)
-    pub attachments: Vec<soroban_sdk::String>,
     /// Ledger sequence when created
     pub created_at: u64,
     /// Ledger sequence when proposal expires
     pub expires_at: u64,
     /// Earliest ledger sequence when proposal can be executed (0 if no timelock)
     pub unlock_ledger: u64,
-    /// Execution conditions (empty = no conditions)
-    pub conditions: Vec<Condition>,
-    /// Logic for combining conditions (default: And)
-    pub condition_logic: ConditionLogic,
 }
 
 /// Recurring payment schedule
@@ -210,22 +164,12 @@ pub struct RecurringPayment {
     pub is_active: bool,
 }
 
-/// Comment on a proposal
+// Add this new struct to types.rs
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct Comment {
-    /// Unique comment ID
-    pub id: u64,
-    /// ID of the proposal this comment belongs to
-    pub proposal_id: u64,
-    /// Address of the comment author
-    pub author: Address,
-    /// Comment text (max 500 chars)
-    pub text: Symbol,
-    /// Parent comment ID (0 for top-level comments)
-    pub parent_id: u64,
-    /// Ledger when comment was created
-    pub created_at: u64,
-    /// Ledger when comment was last edited (0 if never edited)
-    pub edited_at: u64,
+pub struct VelocityConfig {
+    /// Maximum number of transfers allowed in the window
+    pub limit: u32,
+    /// The time window in seconds (e.g., 3600 for 1 hour)
+    pub window: u64,
 }

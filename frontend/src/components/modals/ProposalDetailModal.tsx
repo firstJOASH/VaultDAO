@@ -31,13 +31,15 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
     const [signers, setSigners] = useState<Signer[]>([]);
     const [showQR, setShowQR] = useState(false);
     const [mockXDR] = useState('AAAAAgAAAAC...'); // Mock XDR for demo
-    
+
     useEffect(() => {
         if (isOpen && proposal) {
-            getProposalSignatures(parseInt(proposal.id)).then(setSigners);
+            getProposalSignatures(parseInt(proposal.id)).then((result) => {
+                setSigners(result);
+            });
         }
     }, [isOpen, proposal, getProposalSignatures]);
-    
+
     // Prevent background scrolling
     useEffect(() => {
         if (isOpen) {
@@ -60,12 +62,10 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
     };
 
     const handleRemind = async (address: string) => {
-        if (!proposal) return;
         await remindSigner(parseInt(proposal.id), address);
     };
 
     const handleExport = () => {
-        if (!proposal) return;
         exportSignatures(parseInt(proposal.id));
     };
 
@@ -85,16 +85,15 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm transition-opacity">
             {/* Main Modal Card */}
             <div className="bg-secondary w-full max-w-2xl h-fit max-h-[90vh] flex flex-col rounded-2xl border border-gray-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-                
+
                 {/* 1. Header */}
                 <div className="px-6 py-5 border-b border-gray-800 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-3">
                         <h2 className="text-xl font-bold text-white tracking-tight">Proposal Details</h2>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${
-                            proposal.status === 'Executed' 
-                            ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${proposal.status === 'Executed'
+                            ? 'bg-green-500/10 text-green-500 border-green-500/20'
                             : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
-                        }`}>
+                            }`}>
                             {proposal.status}
                         </span>
                     </div>
@@ -130,7 +129,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
 
                 {/* 2. Scrollable Body */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-6 custom-scrollbar">
-                    
+
                     {/* Signature Flow */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Signing Progress</h3>
@@ -140,7 +139,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* Signature Status */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Signatures</h3>
-                        <SignatureStatus 
+                        <SignatureStatus
                             signers={signers}
                             threshold={proposal.threshold || 3}
                             onRemind={handleRemind}
@@ -159,7 +158,7 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                         </button>
                         {showQR && (
                             <div className="mt-4">
-                                <QRSignature 
+                                <QRSignature
                                     transactionXDR={mockXDR}
                                     onRefresh={handleRefreshSignatures}
                                     signed={signers.filter(s => s.signed).length >= (proposal.threshold || 3)}
@@ -171,13 +170,13 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                     {/* Desktop QR Code */}
                     <div className="hidden lg:block">
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-4">Mobile Signing</h3>
-                        <QRSignature 
+                        <QRSignature
                             transactionXDR={mockXDR}
                             onRefresh={handleRefreshSignatures}
                             signed={signers.filter(s => s.signed).length >= (proposal.threshold || 3)}
                         />
                     </div>
-                    
+
                     {/* Visual Timeline Section */}
                     <div>
                         <h3 className="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-8">Proposal Lifecycle</h3>
@@ -189,18 +188,17 @@ const ProposalDetailModal: React.FC<ProposalDetailModalProps> = ({ isOpen, onClo
                                 { label: 'Executed', icon: CheckCircle2, active: proposal.status === 'Executed' }
                             ].map((step, idx, arr) => (
                                 <div key={idx} className="flex flex-col items-center flex-1 relative z-10">
-                                    <div className={`p-2.5 rounded-full border-2 transition-all duration-500 ${
-                                        step.active ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(var(--accent-rgb),0.3)]' : 'bg-primary border-gray-800 text-gray-600'
-                                    }`}>
+                                    <div className={`p-2.5 rounded-full border-2 transition-all duration-500 ${step.active ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(var(--accent-rgb),0.3)]' : 'bg-primary border-gray-800 text-gray-600'
+                                        }`}>
                                         <step.icon size={16} />
                                     </div>
                                     <span className={`mt-3 text-[10px] font-bold ${step.active ? 'text-white' : 'text-gray-600'}`}>
                                         {step.label}
                                     </span>
-                                    
+
                                     {idx !== arr.length - 1 && (
                                         <div className="absolute top-[1.1rem] left-1/2 w-full h-[2px] -z-10 overflow-hidden">
-                                            <div className={`h-full w-full ${arr[idx+1].active ? 'bg-accent' : 'bg-gray-800'}`} />
+                                            <div className={`h-full w-full ${arr[idx + 1].active ? 'bg-accent' : 'bg-gray-800'}`} />
                                         </div>
                                     )}
                                 </div>
