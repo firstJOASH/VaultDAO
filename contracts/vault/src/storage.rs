@@ -56,6 +56,8 @@ pub enum DataKey {
     InsuranceConfig,
     /// Per-user notification preferences -> NotificationPreferences
     NotificationPrefs(Address),
+    /// Swap result by proposal ID -> SwapResult
+    SwapResult(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -530,4 +532,24 @@ pub fn set_notification_prefs(env: &Env, addr: &Address, prefs: &NotificationPre
     env.storage()
         .persistent()
         .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, INSTANCE_TTL);
+}
+
+// ============================================================================
+// DEX/AMM Integration (Issue: feature/amm-integration)
+// ============================================================================
+
+use crate::types::SwapResult;
+
+pub fn set_swap_result(env: &Env, proposal_id: u64, result: &SwapResult) {
+    let key = DataKey::SwapResult(proposal_id);
+    env.storage().persistent().set(&key, result);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, INSTANCE_TTL_THRESHOLD, PROPOSAL_TTL);
+}
+
+pub fn get_swap_result(env: &Env, proposal_id: u64) -> Option<SwapResult> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SwapResult(proposal_id))
 }

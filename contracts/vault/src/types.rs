@@ -48,6 +48,8 @@ pub struct Config {
     pub velocity_limit: VelocityConfig,
     /// Threshold strategy configuration
     pub threshold_strategy: ThresholdStrategy,
+    /// DEX configuration for automated trading
+    pub dex_config: Option<DexConfig>,
 }
 
 /// Threshold strategy for dynamic approval requirements
@@ -200,6 +202,8 @@ pub struct Proposal {
     pub unlock_ledger: u64,
     /// Insurance amount staked by proposer (0 = no insurance). Held in vault.
     pub insurance_amount: i128,
+    /// Optional swap operation for DEX integration
+    pub swap_operation: Option<SwapProposal>,
 }
 
 /// On-chain comment on a proposal
@@ -323,4 +327,50 @@ impl NotificationPreferences {
             notify_on_expiry: false,
         }
     }
+}
+
+// ============================================================================
+// AMM/DEX Integration (Issue: feature/amm-integration)
+// ============================================================================
+
+/// DEX configuration for automated trading
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DexConfig {
+    /// Enabled DEX protocols
+    pub enabled_dexs: Vec<Address>,
+    /// Maximum slippage tolerance in basis points (e.g., 100 = 1%)
+    pub max_slippage_bps: u32,
+    /// Maximum price impact in basis points (e.g., 500 = 5%)
+    pub max_price_impact_bps: u32,
+    /// Minimum liquidity required for swaps
+    pub min_liquidity: i128,
+}
+
+/// Swap proposal type
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum SwapProposal {
+    /// Simple token swap: (dex, token_in, token_out, amount_in, min_amount_out)
+    Swap(Address, Address, Address, i128, i128),
+    /// Add liquidity: (dex, token_a, token_b, amount_a, amount_b, min_lp_tokens)
+    AddLiquidity(Address, Address, Address, i128, i128, i128),
+    /// Remove liquidity: (dex, lp_token, amount, min_token_a, min_token_b)
+    RemoveLiquidity(Address, Address, i128, i128, i128),
+    /// Stake LP tokens: (farm, lp_token, amount)
+    StakeLp(Address, Address, i128),
+    /// Unstake LP tokens: (farm, lp_token, amount)
+    UnstakeLp(Address, Address, i128),
+    /// Claim farming rewards: (farm)
+    ClaimRewards(Address),
+}
+
+/// DEX operation result
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SwapResult {
+    pub amount_in: i128,
+    pub amount_out: i128,
+    pub price_impact_bps: u32,
+    pub executed_at: u64,
 }

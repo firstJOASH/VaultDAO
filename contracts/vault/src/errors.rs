@@ -101,4 +101,18 @@ pub enum VaultError {
     // Reputation errors (12xx)
     /// Caller's reputation score is too low to perform this action
     ReputationTooLow = 1200,
+
+    // DEX/AMM errors (13xx)
+    /// DEX is not enabled in configuration
+    DexNotEnabled = 1300,
+    /// Slippage exceeds maximum tolerance
+    SlippageExceeded = 1301,
+    /// Price impact exceeds maximum tolerance
+    PriceImpactExceeded = 1302,
+    /// Insufficient liquidity in pool
+    InsufficientLiquidity = 1303,
+    /// Invalid swap parameters
+    InvalidSwapParams = 1304,
+    /// DEX operation failed
+    DexOperationFailed = 1305,
 }

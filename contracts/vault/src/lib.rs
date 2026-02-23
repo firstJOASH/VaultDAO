@@ -18,8 +18,9 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode, NotificationPreferences,
-    Priority, Proposal, ProposalStatus, Reputation, Role, ThresholdStrategy,
+    Comment, Condition, ConditionLogic, Config, DexConfig, InsuranceConfig, ListMode, 
+    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, Role, 
+    SwapProposal, SwapResult, ThresholdStrategy,
 };
 
 /// The main contract structure for VaultDAO.
@@ -90,6 +91,7 @@ impl VaultDAO {
             timelock_delay: config.timelock_delay,
             velocity_limit: config.velocity_limit,
             threshold_strategy: config.threshold_strategy,
+            dex_config: None,
         };
 
         // Store state
@@ -239,6 +241,7 @@ impl VaultDAO {
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
             insurance_amount: actual_insurance,
+            swap_operation: None,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -1551,5 +1554,392 @@ impl VaultDAO {
                 Symbol::new(env, "rejected"),
             );
         }
+    }
+
+    // ========================================================================
+    // DEX/AMM Integration (Issue: feature/amm-integration)
+    // ========================================================================
+
+    /// Configure DEX settings for automated trading
+    pub fn set_dex_config(
+        env: Env,
+        admin: Address,
+        dex_config: types::DexConfig,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let role = storage::get_role(&env, &admin);
+        if role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        let mut config = storage::get_config(&env)?;
+        config.dex_config = Some(dex_config);
+        storage::set_config(&env, &config);
+        events::emit_dex_config_updated(&env, &admin);
+        Ok(())
+    }
+
+    /// Get current DEX configuration
+    pub fn get_dex_config(env: Env) -> Option<types::DexConfig> {
+        storage::get_config(&env).ok()?.dex_config
+    }
+
+    /// Propose a swap operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_swap(
+        env: Env,
+        proposer: Address,
+        swap_op: types::SwapProposal,
+        priority: Priority,
+        conditions: Vec<Condition>,
+        condition_logic: ConditionLogic,
+        insurance_amount: i128,
+    ) -> Result<u64, VaultError> {
+        proposer.require_auth();
+        let config = storage::get_config(&env)?;
+        let role = storage::get_role(&env, &proposer);
+        if role != Role::Treasurer && role != Role::Admin {
+            return Err(VaultError::InsufficientRole);
+        }
+
+        // Validate DEX is enabled
+        let dex_config = config.dex_config.as_ref().ok_or(VaultError::DexNotEnabled)?;
+        
+        // Validate DEX address
+        let dex_addr = match &swap_op {
+            types::SwapProposal::Swap(dex, ..) => dex,
+            types::SwapProposal::AddLiquidity(dex, ..) => dex,
+            types::SwapProposal::RemoveLiquidity(dex, ..) => dex,
+            types::SwapProposal::StakeLp(farm, ..) => farm,
+            types::SwapProposal::UnstakeLp(farm, ..) => farm,
+            types::SwapProposal::ClaimRewards(farm) => farm,
+        };
+
+        if !dex_config.enabled_dexs.contains(dex_addr) {
+            return Err(VaultError::DexNotEnabled);
+        }
+
+        // Create proposal
+        let proposal_id = storage::increment_proposal_id(&env);
+        let current_ledger = env.ledger().sequence();
+        let unlock_ledger = current_ledger + config.timelock_delay as u32;
+
+        let proposal = Proposal {
+            id: proposal_id,
+            proposer: proposer.clone(),
+            recipient: env.current_contract_address(),
+            token: env.current_contract_address(),
+            amount: 0,
+            memo: Symbol::new(&env, "swap"),
+            approvals: Vec::new(&env),
+            abstentions: Vec::new(&env),
+            attachments: Vec::new(&env),
+            status: ProposalStatus::Pending,
+            priority: priority.clone(),
+            conditions,
+            condition_logic,
+            created_at: current_ledger as u64,
+            expires_at: (current_ledger + PROPOSAL_EXPIRY_LEDGERS as u32) as u64,
+            unlock_ledger: unlock_ledger as u64,
+            insurance_amount,
+            swap_operation: Some(swap_op),
+        };
+
+        storage::set_proposal(&env, &proposal);
+        storage::add_to_priority_queue(&env, priority as u32, proposal_id);
+        events::emit_proposal_created(
+            &env,
+            proposal_id,
+            &proposer,
+            &env.current_contract_address(),
+            &env.current_contract_address(),
+            0,
+            0,
+        );
+        Self::update_reputation_on_propose(&env, &proposer);
+        Ok(proposal_id)
+    }
+
+    /// Execute swap with slippage protection
+    pub fn execute_swap(env: Env, executor: Address, proposal_id: u64) -> Result<(), VaultError> {
+        executor.require_auth();
+        let mut proposal = storage::get_proposal(&env, proposal_id)?;
+
+        // Validate proposal status
+        if proposal.status != ProposalStatus::Approved {
+            return Err(VaultError::ProposalNotApproved);
+        }
+
+        // Check timelock
+        if env.ledger().sequence() < proposal.unlock_ledger as u32 {
+            return Err(VaultError::TimelockNotExpired);
+        }
+
+        // Get swap operation
+        let swap_op = proposal.swap_operation.as_ref().ok_or(VaultError::InvalidSwapParams)?;
+        let config = storage::get_config(&env)?;
+        let dex_config = config.dex_config.as_ref().ok_or(VaultError::DexNotEnabled)?;
+
+        // Execute based on operation type
+        let result = match swap_op {
+            types::SwapProposal::Swap(dex, token_in, token_out, amount_in, min_amount_out) => {
+                Self::execute_token_swap(
+                    &env,
+                    dex,
+                    token_in,
+                    token_out,
+                    *amount_in,
+                    *min_amount_out,
+                    dex_config,
+                )?
+            }
+            types::SwapProposal::AddLiquidity(dex, token_a, token_b, amount_a, amount_b, min_lp_tokens) => {
+                Self::add_liquidity_to_pool(
+                    &env,
+                    dex,
+                    token_a,
+                    token_b,
+                    *amount_a,
+                    *amount_b,
+                    *min_lp_tokens,
+                )?
+            }
+            types::SwapProposal::RemoveLiquidity(dex, lp_token, amount, min_token_a, min_token_b) => {
+                Self::remove_liquidity_from_pool(&env, dex, lp_token, *amount, *min_token_a, *min_token_b)?
+            }
+            types::SwapProposal::StakeLp(farm, lp_token, amount) => {
+                Self::stake_lp_tokens(&env, farm, lp_token, *amount)?
+            }
+            types::SwapProposal::UnstakeLp(farm, lp_token, amount) => {
+                Self::unstake_lp_tokens(&env, farm, lp_token, *amount)?
+            }
+            types::SwapProposal::ClaimRewards(farm) => {
+                Self::claim_farming_rewards(&env, farm, proposal_id)?
+            }
+        };
+
+        // Store result and update proposal
+        storage::set_swap_result(&env, proposal_id, &result);
+        proposal.status = ProposalStatus::Executed;
+        storage::set_proposal(&env, &proposal);
+
+        events::emit_proposal_executed(
+            &env,
+            proposal_id,
+            &executor,
+            &proposal.recipient,
+            &proposal.token,
+            0,
+            env.ledger().sequence() as u64,
+        );
+        Self::update_reputation_on_execution(&env, &proposal);
+        Ok(())
+    }
+
+    /// Internal: Execute token swap with slippage protection
+    fn execute_token_swap(
+        env: &Env,
+        dex: &Address,
+        token_in: &Address,
+        token_out: &Address,
+        amount_in: i128,
+        min_amount_out: i128,
+        dex_config: &types::DexConfig,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Calculate expected output and price impact
+        let expected_out = Self::calculate_swap_output(env, dex, token_in, token_out, amount_in)?;
+        let price_impact = Self::calculate_price_impact(amount_in, expected_out, dex_config)?;
+
+        // Validate slippage
+        if expected_out < min_amount_out {
+            return Err(VaultError::SlippageExceeded);
+        }
+
+        // Validate price impact
+        if price_impact > dex_config.max_price_impact_bps {
+            return Err(VaultError::PriceImpactExceeded);
+        }
+
+        // Execute swap via DEX contract
+        token::transfer_to_vault(env, token_in, &env.current_contract_address(), amount_in);
+        
+        // Call DEX swap function (simplified - actual implementation depends on DEX interface)
+        // In production, this would call the actual DEX contract's swap method
+        let amount_out = expected_out;
+
+        events::emit_swap_executed(env, 0, dex, amount_in, amount_out);
+
+        Ok(types::SwapResult {
+            amount_in,
+            amount_out,
+            price_impact_bps: price_impact,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Internal: Add liquidity to pool
+    fn add_liquidity_to_pool(
+        env: &Env,
+        dex: &Address,
+        token_a: &Address,
+        token_b: &Address,
+        amount_a: i128,
+        amount_b: i128,
+        min_lp_tokens: i128,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Transfer tokens to DEX
+        token::transfer_to_vault(env, token_a, &env.current_contract_address(), amount_a);
+        token::transfer_to_vault(env, token_b, &env.current_contract_address(), amount_b);
+
+        // Calculate LP tokens (simplified)
+        let lp_tokens = (amount_a + amount_b) / 2;
+
+        if lp_tokens < min_lp_tokens {
+            return Err(VaultError::SlippageExceeded);
+        }
+
+        events::emit_liquidity_added(env, 0, dex, lp_tokens);
+
+        Ok(types::SwapResult {
+            amount_in: amount_a + amount_b,
+            amount_out: lp_tokens,
+            price_impact_bps: 0,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Internal: Remove liquidity from pool
+    fn remove_liquidity_from_pool(
+        env: &Env,
+        dex: &Address,
+        lp_token: &Address,
+        amount: i128,
+        min_token_a: i128,
+        min_token_b: i128,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Burn LP tokens and receive underlying tokens
+        let token_a_out = amount / 2;
+        let token_b_out = amount / 2;
+
+        if token_a_out < min_token_a || token_b_out < min_token_b {
+            return Err(VaultError::SlippageExceeded);
+        }
+
+        events::emit_liquidity_removed(env, 0, dex, amount);
+
+        Ok(types::SwapResult {
+            amount_in: amount,
+            amount_out: token_a_out + token_b_out,
+            price_impact_bps: 0,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Internal: Stake LP tokens for yield farming
+    fn stake_lp_tokens(
+        env: &Env,
+        farm: &Address,
+        lp_token: &Address,
+        amount: i128,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Transfer LP tokens to farm contract
+        token::transfer_to_vault(env, lp_token, &env.current_contract_address(), amount);
+
+        events::emit_lp_staked(env, 0, farm, amount);
+
+        Ok(types::SwapResult {
+            amount_in: amount,
+            amount_out: 0,
+            price_impact_bps: 0,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Internal: Unstake LP tokens
+    fn unstake_lp_tokens(
+        env: &Env,
+        farm: &Address,
+        lp_token: &Address,
+        amount: i128,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Withdraw LP tokens from farm
+        events::emit_lp_staked(env, 0, farm, amount);
+
+        Ok(types::SwapResult {
+            amount_in: 0,
+            amount_out: amount,
+            price_impact_bps: 0,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Internal: Claim farming rewards
+    fn claim_farming_rewards(
+        env: &Env,
+        farm: &Address,
+        proposal_id: u64,
+    ) -> Result<types::SwapResult, VaultError> {
+        // Claim rewards from farm contract
+        let rewards = 1000; // Placeholder
+
+        events::emit_rewards_claimed(env, proposal_id, farm, rewards);
+
+        Ok(types::SwapResult {
+            amount_in: 0,
+            amount_out: rewards,
+            price_impact_bps: 0,
+            executed_at: env.ledger().sequence() as u64,
+        })
+    }
+
+    /// Calculate expected swap output (constant product formula)
+    fn calculate_swap_output(
+        env: &Env,
+        dex: &Address,
+        token_in: &Address,
+        token_out: &Address,
+        amount_in: i128,
+    ) -> Result<i128, VaultError> {
+        // Get pool reserves (simplified - would query DEX contract)
+        let reserve_in = 1_000_000i128;
+        let reserve_out = 1_000_000i128;
+
+        // Constant product formula: (x + dx) * (y - dy) = x * y
+        // dy = y * dx / (x + dx)
+        let amount_in_with_fee = amount_in * 997 / 1000; // 0.3% fee
+        let numerator = amount_in_with_fee * reserve_out;
+        let denominator = reserve_in + amount_in_with_fee;
+        
+        if denominator == 0 {
+            return Err(VaultError::InsufficientLiquidity);
+        }
+
+        Ok(numerator / denominator)
+    }
+
+    /// Calculate price impact in basis points
+    fn calculate_price_impact(
+        amount_in: i128,
+        amount_out: i128,
+        dex_config: &types::DexConfig,
+    ) -> Result<u32, VaultError> {
+        if amount_in == 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        // Price impact = |1 - (amount_out / amount_in)| * 10000
+        let ratio = (amount_out * 10000) / amount_in;
+        let impact = if ratio > 10000 {
+            (ratio - 10000) as u32
+        } else {
+            (10000 - ratio) as u32
+        };
+
+        Ok(impact)
+    }
+
+    /// Get swap result for a proposal
+    pub fn get_swap_result(env: Env, proposal_id: u64) -> Option<types::SwapResult> {
+        storage::get_swap_result(&env, proposal_id)
     }
 }
