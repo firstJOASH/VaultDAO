@@ -18,9 +18,8 @@ pub use types::InitConfig;
 use errors::VaultError;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
-    Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode,
-    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, Role,
-    ThresholdStrategy,
+    Comment, Condition, ConditionLogic, Config, InsuranceConfig, ListMode, NotificationPreferences,
+    Priority, Proposal, ProposalStatus, Reputation, Role, ThresholdStrategy,
 };
 
 /// The main contract structure for VaultDAO.
@@ -1674,8 +1673,8 @@ impl VaultDAO {
         }
 
         // Get swap operation
-        let swap_op = storage::get_swap_proposal(&env, proposal_id)
-            .ok_or(VaultError::InvalidSwapParams)?;
+        let swap_op =
+            storage::get_swap_proposal(&env, proposal_id).ok_or(VaultError::InvalidSwapParams)?;
         let dex_config = storage::get_dex_config(&env).ok_or(VaultError::DexNotEnabled)?;
 
         // Execute based on operation type
