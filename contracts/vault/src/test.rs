@@ -6,6 +6,7 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Env, Symbol, Vec,
 };
+use types::{Condition, ConditionLogic};
 
 #[test]
 fn test_multisig_approval() {
@@ -51,6 +52,8 @@ fn test_multisig_approval() {
         &100,
         &Symbol::new(&env, "test"),
         &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
     );
 
     // 2. First approval (signer1)
@@ -104,6 +107,8 @@ fn test_unauthorized_proposal() {
         &100,
         &Symbol::new(&env, "fail"),
         &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
     );
 
     assert!(res.is_err());
@@ -153,6 +158,8 @@ fn test_timelock_violation() {
         &600,
         &Symbol::new(&env, "large"),
         &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
     );
 
     // 2. Approve -> Should trigger timelock
@@ -346,4 +353,290 @@ fn test_list_management() {
     assert_eq!(client.get_list_mode(), ListMode::Whitelist);
     client.set_list_mode(&admin, &ListMode::Blacklist);
     assert_eq!(client.get_list_mode(), ListMode::Blacklist);
+}
+
+#[test]
+fn test_condition_balance_above() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::BalanceAbove(500));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Verify proposal has conditions
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.conditions.len(), 1);
+    assert_eq!(proposal.condition_logic, ConditionLogic::And);
+}
+
+#[test]
+fn test_condition_date_after() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    env.ledger().set_sequence_number(100);
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::DateAfter(200));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should fail with ConditionsNotMet - current ledger is 100, needs >= 200
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+
+    // Advance time past the condition
+    env.ledger().set_sequence_number(201);
+
+    // Now should pass condition check (will fail on balance, but that's expected)
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+}
+
+#[test]
+fn test_condition_multiple_and_logic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    env.ledger().set_sequence_number(100);
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::DateAfter(150));
+    conditions.push_back(Condition::DateBefore(250));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should fail - before DateAfter (100 < 150)
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+
+    // Advance to valid window (150 <= 200 <= 250)
+    env.ledger().set_sequence_number(200);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+
+    // Advance past DateBefore (260 > 250)
+    env.ledger().set_sequence_number(260);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+}
+
+#[test]
+fn test_condition_multiple_or_logic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    env.ledger().set_sequence_number(100);
+
+    let mut conditions = Vec::new(&env);
+    conditions.push_back(Condition::DateAfter(200));
+    conditions.push_back(Condition::DateAfter(300));
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::Or,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should fail - neither condition met (ledger=100 < 200 and < 300)
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+
+    // Advance time - now one condition is met (ledger >= 200)
+    env.ledger().set_sequence_number(201);
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
+}
+
+#[test]
+fn test_condition_no_conditions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        threshold_strategy: ThresholdStrategy::Fixed,
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let conditions = Vec::new(&env);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &conditions,
+        &ConditionLogic::And,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+
+    // Should not fail with ConditionsNotMet (no conditions to check)
+    // Will fail with InsufficientBalance, but that's expected
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_ne!(result.err(), Some(Ok(VaultError::ConditionsNotMet)));
 }

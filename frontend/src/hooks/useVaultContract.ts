@@ -12,6 +12,14 @@ import { signTransaction } from '@stellar/freighter-api';
 import { useWallet } from '../context/WalletContextProps';
 import { parseError } from '../utils/errorParser';
 import type { VaultActivity, GetVaultEventsResult, VaultEventType } from '../types/activity';
+import type { TokenInfo } from '../constants/tokens';
+import { 
+    DEFAULT_TOKENS, 
+    XLM_TOKEN, 
+    getAllTrackedTokens, 
+    addCustomToken as addCustomTokenToStorage,
+    isValidStellarAddress
+} from '../constants/tokens';
 
 const CONTRACT_ID = "CDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
@@ -55,6 +63,8 @@ const server = new SorobanRpc.Server(RPC_URL);
 interface StellarBalance {
     asset_type: string;
     balance: string;
+    asset_code?: string;
+    asset_issuer?: string;
 }
 
 /** Known contract event names (topic[0] symbol) */
@@ -187,6 +197,42 @@ export const useVaultContract = () => {
                                 new Address(token).toScVal(),
                                 nativeToScVal(BigInt(amount)),
                                 xdr.ScVal.scvSymbol(memo),
+                            ],
+                        })
+                    ),
+                    auth: [],
+                }))
+                .build();
+
+            const simulation = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation Failed: ${simulation.error}`);
+            const preparedTx = SorobanRpc.assembleTransaction(tx, simulation).build();
+            const signedXdr = await signTransaction(preparedTx.toXDR(), { network: "TESTNET" });
+            const response = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr as string, NETWORK_PASSPHRASE));
+            return response.hash;
+        } catch (e: unknown) {
+            throw parseError(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const approveProposal = async (proposalId: number) => {
+        if (!isConnected || !address) throw new Error("Wallet not connected");
+        setLoading(true);
+        try {
+            const account = await server.getAccount(address);
+            const tx = new TransactionBuilder(account, { fee: "100" })
+                .setNetworkPassphrase(NETWORK_PASSPHRASE)
+                .setTimeout(30)
+                .addOperation(Operation.invokeHostFunction({
+                    func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                        new xdr.InvokeContractArgs({
+                            contractAddress: Address.fromString(CONTRACT_ID).toScAddress(),
+                            functionName: "approve_proposal",
+                            args: [
+                                new Address(address).toScVal(),
+                                nativeToScVal(BigInt(proposalId), { type: "u64" }),
                             ],
                         })
                     ),

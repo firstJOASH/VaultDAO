@@ -69,6 +69,18 @@
                     },
                     {
                       "key": {
+                        "symbol": "threshold_strategy"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "Fixed"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "timelock_delay"
                       },
                       "val": {
@@ -182,6 +194,15 @@
                 },
                 {
                   "symbol": "test"
+                },
+                {
+                  "u32": 1
+                },
+                {
+                  "vec": []
+                },
+                {
+                  "u32": 0
                 }
               ]
             }
@@ -302,6 +323,55 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "PriorityQueue"
+                },
+                {
+                  "u32": 1
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "PriorityQueue"
+                    },
+                    {
+                      "u32": 1
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "u64": 1
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
                   "symbol": "Proposal"
                 },
                 {
@@ -334,6 +404,14 @@
                   "map": [
                     {
                       "key": {
+                        "symbol": "abstentions"
+                      },
+                      "val": {
+                        "vec": []
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "amount"
                       },
                       "val": {
@@ -356,6 +434,30 @@
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "attachments"
+                      },
+                      "val": {
+                        "vec": []
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "condition_logic"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "conditions"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     },
                     {
@@ -388,6 +490,14 @@
                       },
                       "val": {
                         "symbol": "test"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "priority"
+                      },
+                      "val": {
+                        "u32": 1
                       }
                     },
                     {
@@ -701,6 +811,18 @@
                               },
                               "val": {
                                 "u32": 2
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "threshold_strategy"
+                              },
+                              "val": {
+                                "vec": [
+                                  {
+                                    "symbol": "Fixed"
+                                  }
+                                ]
                               }
                             },
                             {

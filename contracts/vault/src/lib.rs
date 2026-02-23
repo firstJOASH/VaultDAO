@@ -4,6 +4,7 @@
 //! proposal workflows, and spending limits.
 
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod errors;
 mod events;
@@ -58,6 +59,62 @@ fn calculate_required_threshold(env: &Env, config: &Config, proposal: &Proposal)
             }
         }
     }
+}
+
+/// Evaluate execution conditions for a proposal
+fn evaluate_conditions(env: &Env, proposal: &Proposal) -> Result<(), VaultError> {
+    if proposal.conditions.is_empty() {
+        return Ok(());
+    }
+
+    let current_ledger = env.ledger().sequence() as u64;
+
+    let mut results = Vec::new(env);
+    for condition in proposal.conditions.iter() {
+        let satisfied = match condition {
+            types::Condition::BalanceAbove(threshold) => {
+                let balance = token::balance(env, &proposal.token);
+                balance > threshold
+            }
+            types::Condition::BalanceBelow(threshold) => {
+                let balance = token::balance(env, &proposal.token);
+                balance < threshold
+            }
+            types::Condition::DateAfter(ledger) => current_ledger >= ledger,
+            types::Condition::DateBefore(ledger) => current_ledger <= ledger,
+            types::Condition::Custom(_) => false,
+        };
+        results.push_back(satisfied);
+    }
+
+    let all_satisfied = match proposal.condition_logic {
+        types::ConditionLogic::And => {
+            let mut all = true;
+            for r in results.iter() {
+                if !r {
+                    all = false;
+                    break;
+                }
+            }
+            all
+        }
+        types::ConditionLogic::Or => {
+            let mut any = false;
+            for r in results.iter() {
+                if r {
+                    any = true;
+                    break;
+                }
+            }
+            any
+        }
+    };
+
+    if !all_satisfied {
+        return Err(VaultError::ConditionsNotMet);
+    }
+
+    Ok(())
 }
 
 #[contractimpl]
@@ -136,6 +193,9 @@ impl VaultDAO {
     /// * `token_addr` - The contract ID of the Stellar Asset Contract (SAC) or custom token.
     /// * `amount` - The transaction amount (in stroops/smallest unit).
     /// * `memo` - A descriptive symbol for the transaction.
+    /// * `priority` - Priority level for the proposal.
+    /// * `conditions` - Optional execution conditions.
+    /// * `condition_logic` - Logic for combining conditions (And/Or).
     ///
     /// # Returns
     /// The unique ID of the newly created proposal.
@@ -147,6 +207,8 @@ impl VaultDAO {
         amount: i128,
         memo: Symbol,
         priority: Priority,
+        conditions: Vec<types::Condition>,
+        condition_logic: types::ConditionLogic,
     ) -> Result<u64, VaultError> {
         // Verify identity
         proposer.require_auth();
@@ -210,6 +272,8 @@ impl VaultDAO {
             created_at: current_ledger,
             expires_at: current_ledger + PROPOSAL_EXPIRY_LEDGERS,
             unlock_ledger: 0,
+            conditions,
+            condition_logic,
         };
 
         storage::set_proposal(&env, &proposal);
@@ -403,6 +467,9 @@ impl VaultDAO {
         if proposal.unlock_ledger > 0 && current_ledger < proposal.unlock_ledger {
             return Err(VaultError::TimelockNotExpired);
         }
+
+        // Evaluate execution conditions
+        evaluate_conditions(&env, &proposal)?;
 
         // Check vault balance
         let balance = token::balance(&env, &proposal.token);
