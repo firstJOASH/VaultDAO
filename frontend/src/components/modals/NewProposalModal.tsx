@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useVaultContract } from '../../hooks/useVaultContract';
 
 export interface NewProposalFormData {
@@ -35,30 +35,16 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [listMode, setListMode] = useState<string>('Disabled');
 
-  useEffect(() => {
-    if (isOpen) {
-      loadListMode();
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (formData.recipient && listMode !== 'Disabled') {
-      validateRecipient();
-    } else {
-      setRecipientError(null);
-    }
-  }, [formData.recipient, listMode]);
-
-  const loadListMode = async () => {
+  const loadListMode = useCallback(async () => {
     try {
       const mode = await getListMode();
       setListMode(mode);
     } catch (error) {
       console.error('Failed to load list mode:', error);
     }
-  };
+  }, [getListMode]);
 
-  const validateRecipient = async () => {
+  const validateRecipient = useCallback(async () => {
     if (!formData.recipient) {
       setRecipientError(null);
       return;
@@ -83,7 +69,21 @@ const NewProposalModal: React.FC<NewProposalModalProps> = ({
     } catch (error) {
       console.error('Failed to validate recipient:', error);
     }
-  };
+  }, [formData.recipient, listMode, isWhitelisted, isBlacklisted]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadListMode();
+    }
+  }, [isOpen, loadListMode]);
+
+  useEffect(() => {
+    if (formData.recipient && listMode !== 'Disabled') {
+      validateRecipient();
+    } else {
+      setRecipientError(null);
+    }
+  }, [formData.recipient, listMode, validateRecipient]);
 
   if (!isOpen) {
     return null;
