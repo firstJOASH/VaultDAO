@@ -3077,7 +3077,6 @@ fn test_retry_succeeds_after_balance_funded() {
     assert!(result.is_ok(), "Retry should succeed after funding");
 }
 
-
 // ============================================================================
 // Gas Optimization Benchmarks
 // ============================================================================
@@ -3120,15 +3119,21 @@ fn test_gas_benchmark_propose_transfer() {
 
     // Print gas usage
     env.budget().print();
-    
+
     // Assert reasonable gas usage (baseline for comparison)
     // This will help track regressions
     let cpu_insns = env.budget().cpu_instruction_cost();
     let mem_bytes = env.budget().memory_bytes_cost();
-    
+
     // Baseline assertions (adjust based on actual measurements)
-    assert!(cpu_insns < 20_000_000, "CPU usage too high for propose_transfer");
-    assert!(mem_bytes < 500_000, "Memory usage too high for propose_transfer");
+    assert!(
+        cpu_insns < 20_000_000,
+        "CPU usage too high for propose_transfer"
+    );
+    assert!(
+        mem_bytes < 500_000,
+        "Memory usage too high for propose_transfer"
+    );
 }
 
 #[test]
@@ -3172,12 +3177,18 @@ fn test_gas_benchmark_approve_proposal() {
     client.approve_proposal(&signer2, &proposal_id);
 
     env.budget().print();
-    
+
     let cpu_insns = env.budget().cpu_instruction_cost();
     let mem_bytes = env.budget().memory_bytes_cost();
-    
-    assert!(cpu_insns < 10_000_000, "CPU usage too high for approve_proposal");
-    assert!(mem_bytes < 500_000, "Memory usage too high for approve_proposal");
+
+    assert!(
+        cpu_insns < 10_000_000,
+        "CPU usage too high for approve_proposal"
+    );
+    assert!(
+        mem_bytes < 500_000,
+        "Memory usage too high for approve_proposal"
+    );
 }
 
 #[test]
@@ -3228,14 +3239,20 @@ fn test_gas_benchmark_batch_execute() {
     let executed = client.batch_execute_proposals(&signer, &proposal_ids);
 
     env.budget().print();
-    
+
     let cpu_insns = env.budget().cpu_instruction_cost();
     let mem_bytes = env.budget().memory_bytes_cost();
-    
+
     assert_eq!(executed.len(), 5);
     // Batch should be more efficient than 5x individual executions
-    assert!(cpu_insns < 50_000_000, "CPU usage too high for batch_execute");
-    assert!(mem_bytes < 2_000_000, "Memory usage too high for batch_execute");
+    assert!(
+        cpu_insns < 50_000_000,
+        "CPU usage too high for batch_execute"
+    );
+    assert!(
+        mem_bytes < 2_000_000,
+        "Memory usage too high for batch_execute"
+    );
 }
 
 #[test]
@@ -3261,7 +3278,7 @@ fn test_gas_benchmark_packed_spending() {
 
     // Measure gas for multiple proposals (tests packed spending optimization)
     env.budget().reset_default();
-    
+
     for i in 0..10 {
         let _proposal_id = client.propose_transfer(
             &signer,
@@ -3277,57 +3294,63 @@ fn test_gas_benchmark_packed_spending() {
     }
 
     env.budget().print();
-    
+
     let cpu_insns = env.budget().cpu_instruction_cost();
     let mem_bytes = env.budget().memory_bytes_cost();
-    
+
     // With packed spending, should be more efficient than separate daily/weekly tracking
-    assert!(cpu_insns < 50_000_000, "CPU usage too high with packed spending");
+    assert!(
+        cpu_insns < 50_000_000,
+        "CPU usage too high with packed spending"
+    );
 }
 
 #[test]
 fn test_gas_comparison_storage_operations() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let contract_id = env.register(VaultDAO, ());
     let client = VaultDAOClient::new(&env, &contract_id);
-    
+
     let admin = Address::generate(&env);
     let signer = Address::generate(&env);
-    
+
     let mut signers = Vec::new(&env);
     signers.push_back(admin.clone());
     signers.push_back(signer.clone());
-    
+
     let config = default_init_config(&env, signers, 1);
     client.initialize(&admin, &config);
-    
+
     // Test demonstrates gas savings from packed storage
     // Measure unpacked (separate daily/weekly operations) via contract calls
     env.budget().reset_default();
-    
+
     // Use contract context for storage operations
     env.as_contract(&contract_id, || {
         use crate::storage;
         storage::add_daily_spent(&env, 1, 100);
         storage::add_weekly_spent(&env, 1, 100);
     });
-    
+
     let unpacked_cpu = env.budget().cpu_instruction_cost();
-    
+
     // Measure packed (combined operation)
     env.budget().reset_default();
-    
+
     env.as_contract(&contract_id, || {
         use crate::storage;
         storage::add_spending_packed(&env, 100);
     });
-    
+
     let packed_cpu = env.budget().cpu_instruction_cost();
-    
+
     // Packed should use less gas (fewer storage operations)
-    assert!(packed_cpu < unpacked_cpu, "Packed storage should use less CPU");
+    assert!(
+        packed_cpu < unpacked_cpu,
+        "Packed storage should use less CPU"
+    );
 }
 
 #[test]
@@ -3369,13 +3392,13 @@ fn test_gas_benchmark_velocity_check() {
             initial_backoff_ledgers: 0,
         },
     };
-    
+
     client.initialize(&admin, &config);
     client.set_role(&admin, &signer, &Role::Treasurer);
 
     // Measure gas for proposals with velocity checking
     env.budget().reset_default();
-    
+
     for i in 0..20 {
         let _proposal_id = client.propose_transfer(
             &signer,
@@ -3391,11 +3414,14 @@ fn test_gas_benchmark_velocity_check() {
     }
 
     env.budget().print();
-    
+
     let cpu_insns = env.budget().cpu_instruction_cost();
-    
+
     // Optimized velocity check should be efficient
-    assert!(cpu_insns < 100_000_000, "CPU usage too high with velocity checking");
+    assert!(
+        cpu_insns < 100_000_000,
+        "CPU usage too high with velocity checking"
+    );
 }
 
 #[test]

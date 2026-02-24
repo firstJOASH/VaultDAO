@@ -772,7 +772,7 @@ pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
 pub fn get_packed_spending(env: &Env) -> crate::types::PackedSpendingLimits {
     let today = get_day_number(env);
     let week = get_week_number(env);
-    
+
     env.storage()
         .temporary()
         .get(&DataKey::PackedSpending)
@@ -798,19 +798,19 @@ pub fn add_spending_packed(env: &Env, amount: i128) {
     let today = get_day_number(env);
     let week = get_week_number(env);
     let mut limits = get_packed_spending(env);
-    
+
     // Reset daily if day changed
     if limits.day_number != today as u32 {
         limits.day_number = today as u32;
         limits.daily_spent = 0;
     }
-    
+
     // Reset weekly if week changed
     if limits.week_number != week as u32 {
         limits.week_number = week as u32;
         limits.weekly_spent = 0;
     }
-    
+
     limits.daily_spent += amount;
     limits.weekly_spent += amount;
     set_packed_spending(env, &limits);
@@ -824,15 +824,15 @@ pub fn check_spending_limits_packed(
     weekly_limit: i128,
 ) -> Result<(), crate::errors::VaultError> {
     let limits = get_packed_spending(env);
-    
+
     if limits.daily_spent + amount > daily_limit {
         return Err(crate::errors::VaultError::ExceedsDailyLimit);
     }
-    
+
     if limits.weekly_spent + amount > weekly_limit {
         return Err(crate::errors::VaultError::ExceedsWeeklyLimit);
     }
-    
+
     Ok(())
 }
 
@@ -845,15 +845,18 @@ pub fn refund_spending_limits_packed(env: &Env, amount: i128) {
 }
 
 /// Batch get proposals - optimized to reduce storage reads
-pub fn batch_get_proposals(env: &Env, ids: &Vec<u64>) -> Vec<Result<Proposal, crate::errors::VaultError>> {
+pub fn batch_get_proposals(
+    env: &Env,
+    ids: &Vec<u64>,
+) -> Vec<Result<Proposal, crate::errors::VaultError>> {
     let mut results = Vec::new(env);
-    
+
     for i in 0..ids.len() {
         if let Some(id) = ids.get(i) {
             results.push_back(get_proposal(env, id));
         }
     }
-    
+
     results
 }
 
@@ -873,24 +876,19 @@ pub fn get_config_cached(env: &Env) -> Result<Config, crate::errors::VaultError>
 }
 
 /// Optimized velocity check using temporary storage with auto-expiry
-pub fn check_velocity_optimized(
-    env: &Env,
-    addr: &Address,
-    limit: u32,
-    window: u64,
-) -> bool {
+pub fn check_velocity_optimized(env: &Env, addr: &Address, limit: u32, window: u64) -> bool {
     let now = env.ledger().timestamp();
     let key = DataKey::VelocityHistory(addr.clone());
-    
+
     // Use temporary storage for auto-expiry
     let history: Vec<u64> = env
         .storage()
         .temporary()
         .get(&key)
         .unwrap_or_else(|| Vec::new(env));
-    
+
     let window_start = now.saturating_sub(window);
-    
+
     // Count valid entries without creating new vector (gas optimization)
     let mut count = 0u32;
     for i in 0..history.len() {
@@ -900,11 +898,11 @@ pub fn check_velocity_optimized(
             }
         }
     }
-    
+
     if count >= limit {
         return false;
     }
-    
+
     // Only rebuild vector if we're adding (lazy cleanup)
     let mut updated = Vec::new(env);
     for i in 0..history.len() {
@@ -915,11 +913,13 @@ pub fn check_velocity_optimized(
         }
     }
     updated.push_back(now);
-    
+
     env.storage().temporary().set(&key, &updated);
     // Auto-expire after window duration
     let ttl_ledgers = (window / 5).max(DAY_IN_LEDGERS as u64) as u32;
-    env.storage().temporary().extend_ttl(&key, ttl_ledgers, ttl_ledgers);
-    
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, ttl_ledgers, ttl_ledgers);
+
     true
 }
