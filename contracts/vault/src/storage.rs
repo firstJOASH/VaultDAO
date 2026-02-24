@@ -1,6 +1,22 @@
 //! VaultDAO - Storage Layer
 //!
 //! Storage keys and helper functions for persistent state.
+//!
+//! # Gas Optimization Notes
+//!
+//! This module implements several gas optimization techniques:
+//!
+//! 1. **Packed Storage Keys**: Related data is stored together using `Packed*` structs
+//!    to reduce the number of storage operations.
+//!
+//! 2. **Temporary Storage**: Short-lived data (daily/weekly spending, velocity history)
+//!    uses temporary storage which is cheaper and auto-expires.
+//!
+//! 3. **Lazy Loading**: Large optional fields are stored separately and loaded only when needed.
+//!
+//! 4. **Caching**: Frequently accessed data is cached in instance storage for faster access.
+//!
+//! 5. **Batch Operations**: Multiple related updates are batched into single storage operations.
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 

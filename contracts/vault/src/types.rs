@@ -1,6 +1,21 @@
 //! VaultDAO - Type Definitions
 //!
 //! Core data structures for the multisig treasury contract.
+//!
+//! # Gas Optimization Notes
+//!
+//! This module implements several gas optimization techniques:
+//!
+//! 1. **Type Size Optimization**: Using smaller integer types (u32 instead of u64) where
+//!    values won't exceed the smaller type's range. This reduces storage and serialization costs.
+//!
+//! 2. **Storage Packing**: Related fields are grouped in `Packed*` structs to minimize
+//!    the number of storage operations. A single storage read/write is cheaper than multiple.
+//!
+//! 3. **Lazy Loading**: Large optional fields (attachments, conditions) are stored separately
+//!    to avoid paying for their serialization when not needed.
+//!
+//! 4. **Bit Packing**: Boolean flags are combined into a single u8 bitfield where possible.
 
 use soroban_sdk::{contracttype, Address, Map, String, Symbol, Vec};
 
