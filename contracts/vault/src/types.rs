@@ -639,6 +639,9 @@ pub struct TemplateOverrides {
     pub override_priority: bool,
     /// Override priority level (only used if override_priority is true)
     pub priority: Priority,
+}
+
+// ============================================================================
 // Execution Retry (Issue: feature/execution-retry)
 // ============================================================================
 

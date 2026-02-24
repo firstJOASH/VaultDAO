@@ -7,8 +7,7 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    ProposalTemplate, Reputation, Role, VaultMetrics, VelocityConfig,
-    Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
+    ProposalTemplate, Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -798,6 +797,9 @@ pub fn template_name_exists(env: &Env, name: &soroban_sdk::Symbol) -> bool {
     env.storage()
         .instance()
         .has(&DataKey::TemplateName(name.clone()))
+}
+
+// ============================================================================
 // Execution Retry (Issue: feature/execution-retry)
 // ============================================================================
 

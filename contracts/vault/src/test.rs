@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::types::{
-    DexConfig, SwapProposal, TemplateOverrides, TimeBasedThreshold, TransferDetails, VelocityConfig,
-    DexConfig, RetryConfig, SwapProposal, TimeBasedThreshold, TransferDetails, VelocityConfig,
+    DexConfig, RetryConfig, SwapProposal, TemplateOverrides, TimeBasedThreshold,
+    TransferDetails, VelocityConfig,
 };
 use crate::{InitConfig, VaultDAO, VaultDAOClient};
 use soroban_sdk::{
@@ -3386,6 +3386,37 @@ fn test_create_from_template_amount_out_of_range() {
 /// Test that inactive template cannot be used
 #[test]
 fn test_create_from_inactive_template() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = token_id.address();
+    let sac_admin_client = StellarAssetClient::new(&env, &token_id.address());
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
@@ -3394,28 +3425,39 @@ fn test_create_from_inactive_template() {
     };
 
     client.initialize(&admin, &config);
-    client.set_role(&admin, &admin, &Role::Treasurer);
+    client.set_role(&admin, &treasurer, &Role::Treasurer);
 
     sac_admin_client.mint(&contract_id, &100);
 
-    let recipient = Address::generate(&env);
-    let proposal_id = client.propose_transfer(
+    // Create template
+    let template_id = client.create_template(
         &admin,
+        &Symbol::new(&env, "payroll"),
+        &Symbol::new(&env, "monthly_payroll"),
         &recipient,
-        &token_addr,
-        &500_i128,
-        &Symbol::new(&env, "test"),
-        &Priority::Normal,
-        &Vec::new(&env),
-        &ConditionLogic::And,
-        &0_i128,
+        &token,
+        &100,
+        &Symbol::new(&env, "salary"),
+        &0,
+        &0,
     );
 
-    client.approve_proposal(&admin, &proposal_id);
+    // Deactivate template
+    client.set_template_status(&admin, &template_id, &false);
 
-    // Should fail with InsufficientBalance (not retried)
-    let result = client.try_execute_proposal(&admin, &proposal_id);
-    assert!(result.is_err());
+    // Try to create from inactive template
+    let overrides = TemplateOverrides {
+        override_recipient: false,
+        recipient: Address::generate(&env),
+        override_amount: false,
+        amount: 0,
+        override_memo: false,
+        memo: Symbol::new(&env, ""),
+        override_priority: false,
+        priority: Priority::Normal,
+    };
+    let result = client.try_create_from_template(&treasurer, &template_id, &overrides);
+    assert_eq!(result.err(), Some(Ok(VaultError::TemplateInactive)));
 }
 
 #[test]
@@ -3583,6 +3625,35 @@ fn test_validate_template_params() {
     assert!(!client.validate_template_params(&100, &200, &50)); // Min > Max
     assert!(!client.validate_template_params(&25, &50, &200)); // Amount below min
     assert!(!client.validate_template_params(&300, &50, &200)); // Amount above max
+}
+
+#[test]
+fn test_retry_not_enabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
         retry_config: RetryConfig {
             enabled: false,
             max_retries: 0,
@@ -3633,3 +3704,4 @@ fn test_retry_succeeds_after_balance_funded() {
     let result = client.try_execute_proposal(&admin, &proposal_id);
     assert!(result.is_ok(), "Retry should succeed after funding");
 }
+

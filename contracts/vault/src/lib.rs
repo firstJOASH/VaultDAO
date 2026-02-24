@@ -21,9 +21,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 use types::{
     Comment, Condition, ConditionLogic, Config, GasConfig, InsuranceConfig, ListMode,
     NotificationPreferences, Priority, Proposal, ProposalStatus, ProposalTemplate, Reputation,
-    Role, TemplateOverrides, ThresholdStrategy, VaultMetrics,
-    NotificationPreferences, Priority, Proposal, ProposalStatus, Reputation, RetryConfig,
-    RetryState, Role, ThresholdStrategy, VaultMetrics,
+    RetryConfig, RetryState, Role, TemplateOverrides, ThresholdStrategy, VaultMetrics,
 };
 
 /// The main contract structure for VaultDAO.
@@ -2759,6 +2757,11 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         events::emit_template_status_changed(&env, template_id, &template.name, is_active, &admin);
+
+        Ok(())
+    }
+
+    // ========================================================================
     // Retry Helpers (private)
     // ========================================================================
 
@@ -3029,6 +3032,8 @@ impl VaultDAO {
         }
 
         true
+    }
+
     /// Check if an error is retryable (transient failure).
     fn is_retryable_error(err: &VaultError) -> bool {
         matches!(

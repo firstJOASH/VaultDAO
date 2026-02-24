@@ -424,6 +424,10 @@ pub fn emit_proposal_from_template(
     env.events().publish(
         (Symbol::new(env, "proposal_from_template"), proposal_id),
         (template_id, template_name.clone(), proposer.clone()),
+    );
+}
+
+// ============================================================================
 // Retry Events (feature/execution-retry)
 // ============================================================================
 

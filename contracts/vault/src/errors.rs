@@ -78,11 +78,6 @@ pub enum VaultError {
     // Recurring payments
     IntervalTooShort = 150,
 
-    // DEX/AMM (consolidated)
-    DexError = 160,
-
-    // Bridge (consolidated)
-    BridgeError = 170,
     // DEX/AMM
     DexNotEnabled = 160,
     SlippageExceeded = 161,
@@ -103,8 +98,9 @@ pub enum VaultError {
     TemplateInactive = 191,
     TemplateNameExists = 192,
     TemplateValidationFailed = 193,
+
     // Retry errors
-    MaxRetriesExceeded = 190,
-    RetryBackoffNotElapsed = 191,
-    RetryNotEnabled = 192,
+    MaxRetriesExceeded = 200,
+    RetryBackoffNotElapsed = 201,
+    RetryNotEnabled = 202,
 }
