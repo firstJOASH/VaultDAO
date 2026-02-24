@@ -86,14 +86,16 @@ pub enum VaultError {
     InvalidSwapParams = 163,
     InsufficientLiquidity = 164,
 
-    // Bridge — variants must match all call sites in bridge.rs exactly
-    BridgeNotEnabled = 170,
+    // Bridge
     BridgeNotConfigured = 171,
-    UnsupportedChain = 172,
     ChainNotSupported = 173,
-    BridgeAmountExceedsLimit = 174,
     ExceedsBridgeLimit = 175,
 
     // Reputation
     ReputationTooLow = 180,
+
+    // Retry errors
+    MaxRetriesExceeded = 190,
+    RetryBackoffNotElapsed = 191,
+    RetryNotEnabled = 192,
 }

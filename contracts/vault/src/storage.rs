@@ -7,7 +7,7 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 use crate::errors::VaultError;
 use crate::types::{
     Comment, Config, GasConfig, InsuranceConfig, ListMode, NotificationPreferences, Proposal,
-    Reputation, Role, VaultMetrics, VelocityConfig,
+    Reputation, RetryState, Role, VaultMetrics, VelocityConfig,
 };
 
 /// Storage key definitions
@@ -70,6 +70,8 @@ pub enum DataKey {
     GasConfig,
     /// Vault-wide performance metrics -> VaultMetrics
     Metrics,
+    /// Retry state for a proposal -> RetryState
+    RetryState(u64),
 }
 
 /// TTL constants (in ledgers, ~5 seconds each)
@@ -718,4 +720,22 @@ pub fn metrics_on_expiry(env: &Env) {
     m.expired_count += 1;
     m.last_updated_ledger = env.ledger().sequence() as u64;
     set_metrics(env, &m);
+}
+
+// ============================================================================
+// Execution Retry (Issue: feature/execution-retry)
+// ============================================================================
+
+pub fn get_retry_state(env: &Env, proposal_id: u64) -> Option<RetryState> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RetryState(proposal_id))
+}
+
+pub fn set_retry_state(env: &Env, proposal_id: u64, state: &RetryState) {
+    let key = DataKey::RetryState(proposal_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL / 2, PROPOSAL_TTL);
 }
