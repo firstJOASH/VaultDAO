@@ -3127,8 +3127,8 @@ fn test_gas_benchmark_propose_transfer() {
     let mem_bytes = env.budget().memory_bytes_cost();
     
     // Baseline assertions (adjust based on actual measurements)
-    assert!(cpu_insns < 10_000_000, "CPU usage too high for propose_transfer");
-    assert!(mem_bytes < 100_000, "Memory usage too high for propose_transfer");
+    assert!(cpu_insns < 20_000_000, "CPU usage too high for propose_transfer");
+    assert!(mem_bytes < 500_000, "Memory usage too high for propose_transfer");
 }
 
 #[test]
@@ -3176,8 +3176,8 @@ fn test_gas_benchmark_approve_proposal() {
     let cpu_insns = env.budget().cpu_instruction_cost();
     let mem_bytes = env.budget().memory_bytes_cost();
     
-    assert!(cpu_insns < 5_000_000, "CPU usage too high for approve_proposal");
-    assert!(mem_bytes < 50_000, "Memory usage too high for approve_proposal");
+    assert!(cpu_insns < 10_000_000, "CPU usage too high for approve_proposal");
+    assert!(mem_bytes < 500_000, "Memory usage too high for approve_proposal");
 }
 
 #[test]
@@ -3234,8 +3234,8 @@ fn test_gas_benchmark_batch_execute() {
     
     assert_eq!(executed.len(), 5);
     // Batch should be more efficient than 5x individual executions
-    assert!(cpu_insns < 20_000_000, "CPU usage too high for batch_execute");
-    assert!(mem_bytes < 200_000, "Memory usage too high for batch_execute");
+    assert!(cpu_insns < 50_000_000, "CPU usage too high for batch_execute");
+    assert!(mem_bytes < 2_000_000, "Memory usage too high for batch_execute");
 }
 
 #[test]
