@@ -61,9 +61,6 @@ pub enum VaultError {
     AddressAlreadyOnList = 92,
     AddressNotOnList = 93,
 
-    // Comments
-    NotCommentAuthor = 100,
-
     // Insurance
     InsuranceInsufficient = 110,
 
@@ -98,4 +95,7 @@ pub enum VaultError {
 
     // Cross-vault errors
     XVaultNotEnabled = 200,
+
+    // Quorum runtime checks
+    QuorumNotReached = 8,
 }

@@ -60,6 +60,8 @@ pub struct Config {
     /// Minimum number of votes (approvals + abstentions) required before threshold is checked.
     /// Set to 0 to disable quorum enforcement.
     pub quorum: u32,
+    /// Quorum requirement as a percentage of total signers.
+    pub quorum_percentage: u32,
     /// Maximum amount per proposal (in stroops)
     pub spending_limit: i128,
     /// Maximum aggregate daily spending (in stroops)
@@ -338,6 +340,12 @@ pub struct Reputation {
     pub proposals_created: u32,
     /// Total approvals given
     pub approvals_given: u32,
+    /// Total abstentions recorded
+    pub abstentions_given: u32,
+    /// Total governance votes cast (approvals + abstentions)
+    pub participation_count: u32,
+    /// Ledger when the signer last cast a governance vote
+    pub last_participation_ledger: u64,
     /// Ledger when reputation was last decayed
     pub last_decay_ledger: u64,
 }
@@ -350,6 +358,9 @@ impl Reputation {
             proposals_rejected: 0,
             proposals_created: 0,
             approvals_given: 0,
+            abstentions_given: 0,
+            participation_count: 0,
+            last_participation_ledger: 0,
             last_decay_ledger: 0,
         }
     }

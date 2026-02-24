@@ -100,6 +100,7 @@ impl VaultDAO {
             signers: config.signers.clone(),
             threshold: config.threshold,
             quorum: config.quorum,
+            quorum_percentage: 0,
             spending_limit: config.spending_limit,
             daily_limit: config.daily_limit,
             weekly_limit: config.weekly_limit,
@@ -676,11 +677,16 @@ impl VaultDAO {
         // Calculate current vote totals
         let approval_count = proposal.approvals.len();
         let quorum_votes = approval_count + proposal.abstentions.len();
+        let previous_quorum_votes = quorum_votes.saturating_sub(1);
+        let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
 
         // Check if threshold met AND quorum satisfied
         let threshold_reached =
             approval_count >= Self::calculate_threshold(&config, &proposal.amount);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if config.quorum > 0 && !was_quorum_reached && quorum_reached {
+            events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
+        }
 
         if threshold_reached && quorum_reached {
             proposal.status = ProposalStatus::Approved;
@@ -718,7 +724,7 @@ impl VaultDAO {
     ///
     /// Can be called by anyone (even an automated tool) as long as:
     /// 1. The proposal status is `Approved`.
-    /// 2. The required approvals threshold has been met.
+    /// 2. The required approvals threshold and quorum are still satisfied.
     /// 3. Any applicable timelock has expired.
     /// 4. The vault has sufficient balance of the target token.
     ///
@@ -763,6 +769,7 @@ impl VaultDAO {
 
         // Enforce retry constraints if this is a retry attempt
         let config = storage::get_config(&env)?;
+        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
         if let Some(retry_state) = storage::get_retry_state(&env, proposal_id) {
             if retry_state.retry_count > 0 {
                 // Check if max retries exhausted
@@ -1286,6 +1293,7 @@ impl VaultDAO {
         }
 
         let mut config = storage::get_config(&env)?;
+        let old_quorum = config.quorum;
 
         // Quorum cannot exceed total signers
         if quorum > config.signers.len() {
@@ -1297,6 +1305,7 @@ impl VaultDAO {
         storage::extend_instance_ttl(&env);
 
         events::emit_config_updated(&env, &admin);
+        events::emit_quorum_updated(&env, &admin, old_quorum, quorum);
 
         Ok(())
     }
@@ -1828,12 +1837,17 @@ impl VaultDAO {
 
         let abstention_count = proposal.abstentions.len();
         let quorum_votes = proposal.approvals.len() + abstention_count;
+        let previous_quorum_votes = quorum_votes.saturating_sub(1);
+        let was_quorum_reached = config.quorum == 0 || previous_quorum_votes >= config.quorum;
 
         // An abstention may push quorum over the line while approvals already meet threshold.
         // Check both conditions and transition to Approved if they are now both satisfied.
         let threshold_reached =
             proposal.approvals.len() >= Self::calculate_threshold(&config, &proposal.amount);
         let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if config.quorum > 0 && !was_quorum_reached && quorum_reached {
+            events::emit_quorum_reached(&env, proposal_id, quorum_votes, config.quorum);
+        }
 
         if threshold_reached && quorum_reached {
             proposal.status = ProposalStatus::Approved;
@@ -1852,6 +1866,9 @@ impl VaultDAO {
 
         // Emit dedicated abstention event
         events::emit_proposal_abstained(&env, proposal_id, &signer, abstention_count, quorum_votes);
+
+        // Track governance participation for abstentions
+        Self::update_reputation_on_abstention(&env, &signer);
 
         Ok(())
     }
@@ -1880,7 +1897,7 @@ impl VaultDAO {
         }
 
         // Load config once (gas optimization — avoids repeated storage reads)
-        let _config = storage::get_config(&env)?;
+        let config = storage::get_config(&env)?;
         let gas_cfg = storage::get_gas_config(&env);
 
         let current_ledger = env.ledger().sequence() as u64;
@@ -1900,6 +1917,11 @@ impl VaultDAO {
 
             // Skip if not in approved state
             if proposal.status != ProposalStatus::Approved {
+                failed_count += 1;
+                continue;
+            }
+            // Skip if approvals/quorum are no longer satisfied
+            if Self::ensure_vote_requirements_satisfied(&config, &proposal).is_err() {
                 failed_count += 1;
                 continue;
             }
@@ -2319,6 +2341,18 @@ impl VaultDAO {
         rep
     }
 
+    /// Get participation stats for an address as
+    /// (approvals_given, abstentions_given, participation_count, last_participation_ledger).
+    pub fn get_participation(env: Env, addr: Address) -> (u32, u32, u32, u64) {
+        let rep = storage::get_reputation(&env, &addr);
+        (
+            rep.approvals_given,
+            rep.abstentions_given,
+            rep.participation_count,
+            rep.last_participation_ledger,
+        )
+    }
+
     // ========================================================================
     // Notification Preferences (Issue: feature/execution-notifications)
     // ========================================================================
@@ -2497,6 +2531,25 @@ impl VaultDAO {
         }
     }
 
+    /// Validate that approvals and quorum participation both satisfy current requirements.
+    fn ensure_vote_requirements_satisfied(
+        config: &Config,
+        proposal: &Proposal,
+    ) -> Result<(), VaultError> {
+        let approval_count = proposal.approvals.len();
+        let quorum_votes = approval_count + proposal.abstentions.len();
+        let threshold_reached =
+            approval_count >= Self::calculate_threshold(config, &proposal.amount);
+        let quorum_reached = config.quorum == 0 || quorum_votes >= config.quorum;
+        if !threshold_reached {
+            return Err(VaultError::ProposalNotApproved);
+        }
+        if !quorum_reached {
+            return Err(VaultError::QuorumNotReached);
+        }
+        Ok(())
+    }
+
     /// Evaluate whether all/any execution conditions are satisfied.
     fn evaluate_conditions(env: &Env, proposal: &Proposal) -> Result<(), VaultError> {
         let current_ledger = env.ledger().sequence() as u64;
@@ -2559,7 +2612,9 @@ impl VaultDAO {
         storage::apply_reputation_decay(env, &mut rep);
         let old_score = rep.score;
         rep.score = (rep.score + REP_APPROVAL_BONUS).min(1000);
-        rep.approvals_given += 1;
+        rep.approvals_given = rep.approvals_given.saturating_add(1);
+        rep.participation_count = rep.participation_count.saturating_add(1);
+        rep.last_participation_ledger = env.ledger().sequence() as u64;
         let new_score = rep.score;
         storage::set_reputation(env, signer, &rep);
         if old_score != new_score {
@@ -2571,6 +2626,16 @@ impl VaultDAO {
                 Symbol::new(env, "approved"),
             );
         }
+    }
+
+    /// Track signer participation for abstentions.
+    fn update_reputation_on_abstention(env: &Env, signer: &Address) {
+        let mut rep = storage::get_reputation(env, signer);
+        storage::apply_reputation_decay(env, &mut rep);
+        rep.abstentions_given = rep.abstentions_given.saturating_add(1);
+        rep.participation_count = rep.participation_count.saturating_add(1);
+        rep.last_participation_ledger = env.ledger().sequence() as u64;
+        storage::set_reputation(env, signer, &rep);
     }
 
     /// Reward proposer and all approvers on successful execution.
@@ -2764,11 +2829,13 @@ impl VaultDAO {
     pub fn execute_swap(env: Env, executor: Address, proposal_id: u64) -> Result<(), VaultError> {
         executor.require_auth();
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let config = storage::get_config(&env)?;
 
         // Validate proposal status
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
+        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
 
         // Check timelock
         if env.ledger().sequence() < proposal.unlock_ledger as u32 {
@@ -3218,9 +3285,11 @@ impl VaultDAO {
         executor.require_auth();
 
         let mut proposal = storage::get_proposal(&env, proposal_id)?;
+        let config = storage::get_config(&env)?;
         if proposal.status != ProposalStatus::Approved {
             return Err(VaultError::ProposalNotApproved);
         }
+        Self::ensure_vote_requirements_satisfied(&config, &proposal)?;
 
         let mut cross_vault = storage::get_cross_vault_proposal(&env, proposal_id)
             .ok_or(VaultError::ProposalNotFound)?;

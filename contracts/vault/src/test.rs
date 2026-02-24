@@ -3310,6 +3310,66 @@ fn test_get_quorum_status() {
     assert!(reached);
 }
 
+/// get_quorum_status returns reached=true when quorum is disabled (quorum=0).
+#[test]
+fn test_get_quorum_status_quorum_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    let (votes, required, reached) = client.get_quorum_status(&proposal_id);
+    assert_eq!(votes, 0);
+    assert_eq!(required, 0);
+    assert!(reached);
+}
+
 /// update_quorum admin function works and rejects invalid values.
 #[test]
 fn test_update_quorum() {
@@ -3359,6 +3419,147 @@ fn test_update_quorum() {
     // Non-admin is rejected
     let result = client.try_update_quorum(&signer1, &1u32);
     assert_eq!(result.err(), Some(Ok(VaultError::Unauthorized)));
+}
+
+/// Execution re-checks threshold+quorum using current config.
+#[test]
+fn test_execution_rechecks_quorum_requirement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 1,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    // 1 approval satisfies threshold=1 and quorum=1.
+    client.approve_proposal(&signer1, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+
+    // Raise quorum to 2: existing votes no longer satisfy quorum.
+    client.update_quorum(&admin, &2u32);
+
+    let result = client.try_execute_proposal(&admin, &proposal_id);
+    assert_eq!(result.err(), Some(Ok(VaultError::QuorumNotReached)));
+}
+
+/// Batch execution skips approved proposals that no longer satisfy quorum.
+#[test]
+fn test_batch_execution_rechecks_quorum_requirement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(signer1.clone());
+    signers.push_back(signer2.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 1,
+        default_voting_deadline: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 5000,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+    client.set_role(&admin, &signer1, &Role::Treasurer);
+
+    let proposal_id = client.propose_transfer(
+        &signer1,
+        &user,
+        &token,
+        &100,
+        &Symbol::new(&env, "test"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0i128,
+    );
+
+    client.approve_proposal(&signer1, &proposal_id);
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
+
+    // Raise quorum so the current vote set no longer qualifies.
+    client.update_quorum(&admin, &2u32);
+
+    let mut proposal_ids = Vec::new(&env);
+    proposal_ids.push_back(proposal_id);
+    let executed = client.batch_execute_proposals(&admin, &proposal_ids);
+    assert_eq!(executed.len(), 0);
+
+    // Proposal remains approved but non-executable until quorum is satisfied.
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
 /// Quorum satisfied purely by approvals (no abstentions needed).
@@ -5129,6 +5330,9 @@ fn test_reputation_initialized_at_neutral() {
     assert_eq!(rep.proposals_executed, 0);
     assert_eq!(rep.proposals_rejected, 0);
     assert_eq!(rep.approvals_given, 0);
+    assert_eq!(rep.abstentions_given, 0);
+    assert_eq!(rep.participation_count, 0);
+    assert_eq!(rep.last_participation_ledger, 0);
 }
 
 #[test]
@@ -5255,6 +5459,70 @@ fn test_reputation_increases_on_approval() {
     let rep_after = client.get_reputation(&approver);
     assert!(rep_after.score >= score_before); // Score should increase or stay same
     assert_eq!(rep_after.approvals_given, 1);
+    assert_eq!(rep_after.abstentions_given, 0);
+    assert_eq!(rep_after.participation_count, 1);
+}
+
+#[test]
+fn test_participation_tracking_on_abstention() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(VaultDAO, ());
+    let client = VaultDAOClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let abstainer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let mut signers = Vec::new(&env);
+    signers.push_back(admin.clone());
+    signers.push_back(abstainer.clone());
+
+    let config = InitConfig {
+        signers,
+        threshold: 1,
+        quorum: 0,
+        spending_limit: 1000,
+        daily_limit: 5000,
+        weekly_limit: 10000,
+        timelock_threshold: 500,
+        timelock_delay: 100,
+        velocity_limit: VelocityConfig {
+            limit: 100,
+            window: 3600,
+        },
+        threshold_strategy: ThresholdStrategy::Fixed,
+        default_voting_deadline: 0,
+        retry_config: RetryConfig {
+            enabled: false,
+            max_retries: 0,
+            initial_backoff_ledgers: 0,
+        },
+    };
+    client.initialize(&admin, &config);
+
+    let proposal_id = client.propose_transfer(
+        &admin,
+        &recipient,
+        &token,
+        &100,
+        &Symbol::new(&env, "abstain"),
+        &Priority::Normal,
+        &Vec::new(&env),
+        &ConditionLogic::And,
+        &0,
+    );
+
+    client.abstain_from_proposal(&abstainer, &proposal_id);
+
+    let (approvals, abstentions, total_votes, last_vote_ledger) =
+        client.get_participation(&abstainer);
+    assert_eq!(approvals, 0);
+    assert_eq!(abstentions, 1);
+    assert_eq!(total_votes, 1);
+    assert_eq!(last_vote_ledger, env.ledger().sequence() as u64);
 }
 
 #[test]

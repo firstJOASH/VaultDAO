@@ -150,6 +150,22 @@ pub fn emit_config_updated(env: &Env, updater: &Address) {
         .publish((Symbol::new(env, "config_updated"),), updater.clone());
 }
 
+/// Emit when quorum configuration is updated by admin
+pub fn emit_quorum_updated(env: &Env, admin: &Address, old_quorum: u32, new_quorum: u32) {
+    env.events().publish(
+        (Symbol::new(env, "quorum_updated"),),
+        (admin.clone(), old_quorum, new_quorum),
+    );
+}
+
+/// Emit when a proposal reaches quorum participation threshold.
+pub fn emit_quorum_reached(env: &Env, proposal_id: u64, quorum_votes: u32, required_quorum: u32) {
+    env.events().publish(
+        (Symbol::new(env, "quorum_reached"), proposal_id),
+        (quorum_votes, required_quorum),
+    );
+}
+
 /// Emit when a signer is added
 pub fn emit_signer_added(env: &Env, signer: &Address, total_signers: u32) {
     env.events().publish(
